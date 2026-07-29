@@ -2,6 +2,8 @@ package com.termux.terminal;
 
 import junit.framework.TestCase;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class ByteQueueTest extends TestCase {
 
 	private static void assertArrayEquals(byte[] expected, byte[] actual) {
@@ -49,6 +51,68 @@ public class ByteQueueTest extends TestCase {
 	public void testReadNonBlocking() throws Exception {
 		ByteQueue q = new ByteQueue(10);
 		assertEquals(0, q.read(new byte[128], false));
+	}
+
+	public void testEmptyStateTracksWritesAndReads() throws Exception {
+		ByteQueue q = new ByteQueue(10);
+		assertFalse(q.hasReadableBytes());
+
+		assertTrue(q.write(new byte[]{1, 2, 3}, 0, 3));
+		assertTrue(q.hasReadableBytes());
+
+		assertEquals(3, q.read(new byte[10], false));
+		assertFalse(q.hasReadableBytes());
+	}
+
+	public void testClosedQueueHasNoReadableBytes() throws Exception {
+		ByteQueue q = new ByteQueue(10);
+		assertTrue(q.write(new byte[]{1, 2, 3}, 0, 3));
+		q.close();
+
+		assertFalse(q.hasReadableBytes());
+	}
+
+	public void testFullQueueBackpressuresWriterUntilRead() throws Exception {
+		ByteQueue q = new ByteQueue(3);
+		assertTrue(q.write(new byte[]{1, 2, 3}, 0, 3));
+		AtomicBoolean result = new AtomicBoolean();
+		AtomicBoolean finished = new AtomicBoolean();
+		Thread writer = new Thread(() -> {
+			result.set(q.write(new byte[]{4}, 0, 1));
+			finished.set(true);
+		});
+		writer.start();
+
+		Thread.sleep(50);
+		assertFalse(finished.get());
+
+		byte[] first = new byte[3];
+		assertEquals(3, q.read(first, false));
+		writer.join(1000);
+		assertFalse(writer.isAlive());
+		assertTrue(finished.get());
+		assertTrue(result.get());
+
+		byte[] second = new byte[1];
+		assertEquals(1, q.read(second, false));
+		assertEquals(4, second[0]);
+	}
+
+	public void testCloseUnblocksWaitingWriter() throws Exception {
+		ByteQueue q = new ByteQueue(1);
+		assertTrue(q.write(new byte[]{1}, 0, 1));
+		AtomicBoolean result = new AtomicBoolean(true);
+		Thread writer = new Thread(() ->
+			result.set(q.write(new byte[]{2}, 0, 1)));
+		writer.start();
+
+		Thread.sleep(50);
+		assertTrue(writer.isAlive());
+		q.close();
+		writer.join(1000);
+
+		assertFalse(writer.isAlive());
+		assertFalse(result.get());
 	}
 
 }

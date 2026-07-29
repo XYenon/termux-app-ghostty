@@ -39,10 +39,36 @@ public abstract class TerminalTestCase extends TestCase {
 			titleChanges.add(new ChangedTitle(oldTitle, newTitle));
 		}
 
+        @Override
+        public void workingDirectoryChanged(String workingDirectory) {
+        }
+
+        @Override
+        public void onMouseShapeChanged(int shape) {
+        }
+
+        @Override
+        public void onDesktopNotification(String title, String body) {
+        }
+
+        @Override
+        public void onProgressReport(int state, int progress) {
+        }
+
 		@Override
 		public void onCopyTextToClipboard(String text) {
 			clipboardPuts.add(text);
 		}
+
+        @Override
+        public int onOscClipboard(int location, String mimeType, byte[] data, boolean clear) {
+            return OSC_CLIPBOARD_RESULT_SUCCESS;
+        }
+
+        @Override
+        public byte[] onOscClipboardRead(int location) {
+            return null;
+        }
 
         @Override
         public void onPasteTextFromClipboard() {

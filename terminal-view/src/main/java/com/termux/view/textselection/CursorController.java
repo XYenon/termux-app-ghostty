@@ -10,10 +10,7 @@ import com.termux.view.TerminalView;
  * It is not used outside of {@link TerminalView}.
  */
 public interface CursorController extends ViewTreeObserver.OnTouchModeChangeListener {
-    /**
-     * Show the cursors on screen. Will be drawn by {@link #render()} by a call during onDraw.
-     * See also {@link #hide()}.
-     */
+    /** Show the cursors on screen. See also {@link #hide()}. */
     void show(MotionEvent event);
 
     /**
@@ -22,9 +19,7 @@ public interface CursorController extends ViewTreeObserver.OnTouchModeChangeList
      */
     boolean hide();
 
-    /**
-     * Render the cursors.
-     */
+    /** Refresh the cursor handles after their positions change. */
     void render();
 
     /**

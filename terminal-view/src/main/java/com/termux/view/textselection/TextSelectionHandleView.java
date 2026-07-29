@@ -310,6 +310,7 @@ public class TextSelectionHandleView extends View {
                 final float newPosY = rawY - mTouchToWindowOffsetY + mHotspotY + mTouchOffsetY;
 
                 mCursorController.updatePosition(this, Math.round(newPosX), Math.round(newPosY));
+                mCursorController.render();
                 break;
             }
 

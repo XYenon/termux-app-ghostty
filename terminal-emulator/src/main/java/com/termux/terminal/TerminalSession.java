@@ -16,6 +16,7 @@ import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A terminal session, consisting of a process coupled to a terminal interface.
@@ -32,23 +33,30 @@ public final class TerminalSession extends TerminalOutput {
 
     private static final int MSG_NEW_INPUT = 1;
     private static final int MSG_PROCESS_EXITED = 4;
+    /** Large enough to preserve typical full-screen TUI writes in one feed. */
+    private static final int PROCESS_INPUT_BUFFER_SIZE = 64 * 1024;
+    /** Bound pending PTY writes while still allowing large responses to stream. */
+    private static final int PROCESS_OUTPUT_BUFFER_SIZE = 64 * 1024;
 
     public final String mHandle = UUID.randomUUID().toString();
 
-    TerminalEmulator mEmulator;
+    GhosttyTerminal mTerminal;
 
     /**
      * A queue written to from a separate thread when the process outputs, and read by main thread to process by
      * terminal emulator.
      */
-    final ByteQueue mProcessToTerminalIOQueue = new ByteQueue(4096);
-    /**
-     * A queue written to from the main thread due to user interaction, and read by another thread which forwards by
-     * writing to the {@link #mTerminalFileDescriptor}.
-     */
-    final ByteQueue mTerminalToProcessIOQueue = new ByteQueue(4096);
-    /** Buffer to write translate code points into utf8 before writing to mTerminalToProcessIOQueue */
+    final ByteQueue mProcessToTerminalIOQueue =
+        new ByteQueue(PROCESS_INPUT_BUFFER_SIZE);
+    private final AtomicBoolean mProcessInputPending = new AtomicBoolean();
+    /** Bounded queue for ordered writes to the terminal process. */
+    final ByteQueue mTerminalToProcessIOQueue =
+        new ByteQueue(PROCESS_OUTPUT_BUFFER_SIZE);
+    private final Object mTerminalWriteLock = new Object();
+    /** Buffer used to encode code points as UTF-8 before queuing them. */
     private final byte[] mUtf8InputBuffer = new byte[5];
+    private boolean mCloseRequested;
+    private boolean mClosed;
 
     /** Callback which gets notified when a session finishes or changes title. */
     TerminalSessionClient mClient;
@@ -94,24 +102,24 @@ public final class TerminalSession extends TerminalOutput {
      */
     public void updateTerminalSessionClient(TerminalSessionClient client) {
         mClient = client;
-
-        if (mEmulator != null)
-            mEmulator.updateTerminalSessionClient(client);
     }
 
     /** Inform the attached pty of the new size and reflow or initialize the emulator. */
     public void updateSize(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
-        if (mEmulator == null) {
+        synchronized (this) {
+            if (mCloseRequested) return;
+        }
+        if (mTerminal == null) {
             initializeEmulator(columns, rows, cellWidthPixels, cellHeightPixels);
         } else {
             JNI.setPtyWindowSize(mTerminalFileDescriptor, rows, columns, cellWidthPixels, cellHeightPixels);
-            mEmulator.resize(columns, rows, cellWidthPixels, cellHeightPixels);
+            mTerminal.resize(columns, rows, cellWidthPixels, cellHeightPixels);
         }
     }
 
     /** The terminal title as set through escape sequences or null if none set. */
     public String getTitle() {
-        return (mEmulator == null) ? null : mEmulator.getTitle();
+        return (mTerminal == null) ? null : mTerminal.getTitle();
     }
 
     /**
@@ -121,7 +129,12 @@ public final class TerminalSession extends TerminalOutput {
      * @param rows    The number of rows in the terminal window.
      */
     public void initializeEmulator(int columns, int rows, int cellWidthPixels, int cellHeightPixels) {
-        mEmulator = new TerminalEmulator(this, columns, rows, cellWidthPixels, cellHeightPixels, mTranscriptRows, mClient);
+        int transcriptRows = mTranscriptRows == null
+            ? TerminalEmulator.DEFAULT_TERMINAL_TRANSCRIPT_ROWS
+            : mTranscriptRows;
+        mTerminal = new GhosttyTerminal(this, columns, rows, cellWidthPixels,
+            cellHeightPixels, transcriptRows);
+        mTerminal.setColorScheme(TerminalColors.COLOR_SCHEME.copyColors());
 
         int[] processId = new int[1];
         mTerminalFileDescriptor = JNI.createSubprocess(mShellPath, mCwd, mArgs, mEnv, processId, rows, columns, cellWidthPixels, cellHeightPixels);
@@ -134,12 +147,13 @@ public final class TerminalSession extends TerminalOutput {
             @Override
             public void run() {
                 try (InputStream termIn = new FileInputStream(terminalFileDescriptorWrapped)) {
-                    final byte[] buffer = new byte[4096];
+                    final byte[] buffer = new byte[PROCESS_INPUT_BUFFER_SIZE];
                     while (true) {
                         int read = termIn.read(buffer);
                         if (read == -1) return;
                         if (!mProcessToTerminalIOQueue.write(buffer, 0, read)) return;
-                        mMainThreadHandler.sendEmptyMessage(MSG_NEW_INPUT);
+                        if (mProcessInputPending.compareAndSet(false, true))
+                            mMainThreadHandler.sendEmptyMessage(MSG_NEW_INPUT);
                     }
                 } catch (Exception e) {
                     // Ignore, just shutting down.
@@ -150,15 +164,17 @@ public final class TerminalSession extends TerminalOutput {
         new Thread("TermSessionOutputWriter[pid=" + mShellPid + "]") {
             @Override
             public void run() {
-                final byte[] buffer = new byte[4096];
                 try (FileOutputStream termOut = new FileOutputStream(terminalFileDescriptorWrapped)) {
+                    byte[] buffer = new byte[PROCESS_OUTPUT_BUFFER_SIZE];
                     while (true) {
-                        int bytesToWrite = mTerminalToProcessIOQueue.read(buffer, true);
-                        if (bytesToWrite == -1) return;
-                        termOut.write(buffer, 0, bytesToWrite);
+                        int read = mTerminalToProcessIOQueue.read(buffer, true);
+                        if (read < 0) return;
+                        termOut.write(buffer, 0, read);
                     }
                 } catch (IOException e) {
                     // Ignore.
+                } finally {
+                    mTerminalToProcessIOQueue.close();
                 }
             }
         }.start();
@@ -176,7 +192,11 @@ public final class TerminalSession extends TerminalOutput {
     /** Write data to the shell process. */
     @Override
     public void write(byte[] data, int offset, int count) {
-        if (mShellPid > 0) mTerminalToProcessIOQueue.write(data, offset, count);
+        if (mShellPid > 0 && count > 0) {
+            synchronized (mTerminalWriteLock) {
+                mTerminalToProcessIOQueue.write(data, offset, count);
+            }
+        }
     }
 
     /** Write the Unicode code point to the terminal encoded in UTF-8. */
@@ -216,8 +236,8 @@ public final class TerminalSession extends TerminalOutput {
         write(mUtf8InputBuffer, 0, bufferPosition);
     }
 
-    public TerminalEmulator getEmulator() {
-        return mEmulator;
+    public GhosttyTerminal getTerminal() {
+        return mTerminal;
     }
 
     /** Notify the {@link #mClient} that the screen has changed. */
@@ -227,7 +247,7 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Reset state for terminal emulator state. */
     public void reset() {
-        mEmulator.reset();
+        mTerminal.reset();
         notifyScreenUpdate();
     }
 
@@ -240,6 +260,34 @@ public final class TerminalSession extends TerminalOutput {
                 Logger.logWarn(mClient, LOG_TAG, "Failed sending SIGKILL: " + e.getMessage());
             }
         }
+    }
+
+    /**
+     * Discard this session and release its native terminal after the subprocess
+     * has stopped. Safe to call more than once.
+     */
+    public void close() {
+        boolean killProcess;
+        synchronized (this) {
+            if (mCloseRequested) return;
+            mCloseRequested = true;
+            killProcess = mShellPid > 0;
+        }
+        if (killProcess)
+            finishIfRunning();
+        else
+            closeTerminalIfRequested();
+    }
+
+    private void closeTerminalIfRequested() {
+        GhosttyTerminal terminal;
+        synchronized (this) {
+            if (!mCloseRequested || mClosed || mShellPid > 0) return;
+            mClosed = true;
+            terminal = mTerminal;
+            mTerminal = null;
+        }
+        if (terminal != null) terminal.close();
     }
 
     /** Cleanup resources when the process exits. */
@@ -260,6 +308,26 @@ public final class TerminalSession extends TerminalOutput {
         mClient.onTitleChanged(this);
     }
 
+    @Override
+    public void workingDirectoryChanged(String workingDirectory) {
+        mClient.onWorkingDirectoryChanged(this, workingDirectory);
+    }
+
+    @Override
+    public void onMouseShapeChanged(int shape) {
+        mClient.onMouseShapeChanged(this, shape);
+    }
+
+    @Override
+    public void onDesktopNotification(String title, String body) {
+        mClient.onDesktopNotification(this, title, body);
+    }
+
+    @Override
+    public void onProgressReport(int state, int progress) {
+        mClient.onProgressReport(this, state, progress);
+    }
+
     public synchronized boolean isRunning() {
         return mShellPid != -1;
     }
@@ -272,6 +340,16 @@ public final class TerminalSession extends TerminalOutput {
     @Override
     public void onCopyTextToClipboard(String text) {
         mClient.onCopyTextToClipboard(this, text);
+    }
+
+    @Override
+    public int onOscClipboard(int location, String mimeType, byte[] data, boolean clear) {
+        return mClient.onOscClipboard(this, location, mimeType, data, clear);
+    }
+
+    @Override
+    public byte[] onOscClipboardRead(int location) {
+        return mClient.onOscClipboardRead(this, location);
     }
 
     @Override
@@ -295,6 +373,12 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Returns the shell's working directory or null if it was unavailable. */
     public String getCwd() {
+        GhosttyTerminal terminal = mTerminal;
+        if (terminal != null) {
+            String reportedCwd = normalizeReportedWorkingDirectory(
+                terminal.getWorkingDirectory());
+            if (reportedCwd != null) return reportedCwd;
+        }
         if (mShellPid < 1) {
             return null;
         }
@@ -312,6 +396,26 @@ public final class TerminalSession extends TerminalOutput {
             Logger.logStackTraceWithMessage(mClient, LOG_TAG, "Error getting current directory", e);
         }
         return null;
+    }
+
+    static String normalizeReportedWorkingDirectory(String value) {
+        if (value == null || value.isEmpty()) return null;
+        if (value.startsWith("/")) return value;
+        try {
+            java.net.URI uri = new java.net.URI(value);
+            String scheme = uri.getScheme();
+            if (scheme == null || !("file".equalsIgnoreCase(scheme) ||
+                "kitty-shell-cwd".equalsIgnoreCase(scheme))) {
+                return null;
+            }
+            String host = uri.getHost();
+            if (host != null && !host.isEmpty() &&
+                !"localhost".equalsIgnoreCase(host)) return null;
+            String path = uri.getPath();
+            return path == null || !path.startsWith("/") ? null : path;
+        } catch (java.net.URISyntaxException e) {
+            return null;
+        }
     }
 
     private static FileDescriptor wrapFileDescriptor(int fileDescriptor, TerminalSessionClient client) {
@@ -336,14 +440,20 @@ public final class TerminalSession extends TerminalOutput {
     @SuppressLint("HandlerLeak")
     class MainThreadHandler extends Handler {
 
-        final byte[] mReceiveBuffer = new byte[4 * 1024];
+        final byte[] mReceiveBuffer = new byte[PROCESS_INPUT_BUFFER_SIZE];
 
         @Override
         public void handleMessage(Message msg) {
             int bytesRead = mProcessToTerminalIOQueue.read(mReceiveBuffer, false);
             if (bytesRead > 0) {
-                mEmulator.append(mReceiveBuffer, bytesRead);
+                mTerminal.feed(mReceiveBuffer, 0, bytesRead);
                 notifyScreenUpdate();
+            }
+
+            mProcessInputPending.set(false);
+            if (mProcessToTerminalIOQueue.hasReadableBytes() &&
+                mProcessInputPending.compareAndSet(false, true)) {
+                sendEmptyMessage(MSG_NEW_INPUT);
             }
 
             if (msg.what == MSG_PROCESS_EXITED) {
@@ -361,10 +471,11 @@ public final class TerminalSession extends TerminalOutput {
                 exitDescription += " - press Enter]";
 
                 byte[] bytesToWrite = exitDescription.getBytes(StandardCharsets.UTF_8);
-                mEmulator.append(bytesToWrite, bytesToWrite.length);
+                mTerminal.feed(bytesToWrite, 0, bytesToWrite.length);
                 notifyScreenUpdate();
 
                 mClient.onSessionFinished(TerminalSession.this);
+                closeTerminalIfRequested();
             }
         }
 

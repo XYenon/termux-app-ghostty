@@ -45,7 +45,6 @@ import com.termux.shared.data.DataUtils;
 import com.termux.shared.shell.command.ExecutionCommand;
 import com.termux.shared.shell.command.ExecutionCommand.Runner;
 import com.termux.shared.shell.command.ExecutionCommand.ShellCreateMode;
-import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TerminalSessionClient;
 
@@ -275,8 +274,10 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             ExecutionCommand executionCommand = termuxSessions.get(i).getExecutionCommand();
             processResult = mWantsToStop || executionCommand.isPluginExecutionCommandWithPendingResult();
             termuxSessions.get(i).killIfExecuting(this, processResult);
-            if (!processResult)
+            if (!processResult) {
+                termuxSessions.get(i).getTerminalSession().close();
                 mShellManager.mTermuxSessions.remove(termuxSessions.get(i));
+            }
         }
 
 
@@ -629,8 +630,10 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     public synchronized int removeTermuxSession(TerminalSession sessionToRemove) {
         int index = getIndexOfSession(sessionToRemove);
 
-        if (index >= 0)
+        if (index >= 0) {
             mShellManager.mTermuxSessions.get(index).finish();
+            sessionToRemove.close();
+        }
 
         return index;
     }
@@ -647,7 +650,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             if (executionCommand != null && executionCommand.isPluginExecutionCommand)
                 TermuxPluginUtils.processPluginExecutionCommandResult(this, LOG_TAG, executionCommand);
 
-            mShellManager.mTermuxSessions.remove(termuxSession);
+            if (mShellManager.mTermuxSessions.remove(termuxSession))
+                termuxSession.getTerminalSession().close();
 
             // Notify {@link TermuxSessionsListViewController} that sessions list has been updated if
             // activity in is foreground

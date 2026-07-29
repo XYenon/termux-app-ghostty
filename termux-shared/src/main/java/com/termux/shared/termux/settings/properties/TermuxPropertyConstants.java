@@ -8,7 +8,7 @@ import com.termux.shared.file.filesystem.FileType;
 import com.termux.shared.settings.properties.SharedProperties;
 import com.termux.shared.termux.TermuxConstants;
 import com.termux.shared.logger.Logger;
-import com.termux.terminal.TerminalEmulator;
+import com.termux.terminal.GhosttyTerminal;
 import com.termux.view.TerminalView;
 
 import java.io.File;
@@ -205,10 +205,10 @@ public final class TermuxPropertyConstants {
     public static final String VALUE_TERMINAL_CURSOR_STYLE_UNDERLINE = "underline";
     public static final String VALUE_TERMINAL_CURSOR_STYLE_BAR = "bar";
 
-    public static final int IVALUE_TERMINAL_CURSOR_STYLE_BLOCK = TerminalEmulator.TERMINAL_CURSOR_STYLE_BLOCK;
-    public static final int IVALUE_TERMINAL_CURSOR_STYLE_UNDERLINE = TerminalEmulator.TERMINAL_CURSOR_STYLE_UNDERLINE;
-    public static final int IVALUE_TERMINAL_CURSOR_STYLE_BAR = TerminalEmulator.TERMINAL_CURSOR_STYLE_BAR;
-    public static final int DEFAULT_IVALUE_TERMINAL_CURSOR_STYLE = TerminalEmulator.DEFAULT_TERMINAL_CURSOR_STYLE;
+    public static final int IVALUE_TERMINAL_CURSOR_STYLE_BLOCK = GhosttyTerminal.CURSOR_STYLE_BLOCK;
+    public static final int IVALUE_TERMINAL_CURSOR_STYLE_UNDERLINE = GhosttyTerminal.CURSOR_STYLE_UNDERLINE;
+    public static final int IVALUE_TERMINAL_CURSOR_STYLE_BAR = GhosttyTerminal.CURSOR_STYLE_BAR;
+    public static final int DEFAULT_IVALUE_TERMINAL_CURSOR_STYLE = GhosttyTerminal.CURSOR_STYLE_BLOCK;
 
     /** Defines the bidirectional map for terminal cursor styles and their internal values */
     public static final ImmutableBiMap<String, Integer> MAP_TERMINAL_CURSOR_STYLE =
@@ -249,9 +249,9 @@ public final class TermuxPropertyConstants {
 
     /** Defines the key for the terminal transcript rows */
     public static final String KEY_TERMINAL_TRANSCRIPT_ROWS =  "terminal-transcript-rows"; // Default: "terminal-transcript-rows"
-    public static final int IVALUE_TERMINAL_TRANSCRIPT_ROWS_MIN = TerminalEmulator.TERMINAL_TRANSCRIPT_ROWS_MIN;
-    public static final int IVALUE_TERMINAL_TRANSCRIPT_ROWS_MAX = TerminalEmulator.TERMINAL_TRANSCRIPT_ROWS_MAX;
-    public static final int DEFAULT_IVALUE_TERMINAL_TRANSCRIPT_ROWS = TerminalEmulator.DEFAULT_TERMINAL_TRANSCRIPT_ROWS;
+    public static final int IVALUE_TERMINAL_TRANSCRIPT_ROWS_MIN = 100;
+    public static final int IVALUE_TERMINAL_TRANSCRIPT_ROWS_MAX = 50000;
+    public static final int DEFAULT_IVALUE_TERMINAL_TRANSCRIPT_ROWS = 2000;
 
 
 

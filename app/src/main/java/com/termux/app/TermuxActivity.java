@@ -37,6 +37,7 @@ import com.termux.shared.activity.media.AppCompatActivityUtils;
 import com.termux.shared.data.IntentUtils;
 import com.termux.shared.android.PermissionUtils;
 import com.termux.shared.data.DataUtils;
+import com.termux.shared.interact.ShareUtils;
 import com.termux.shared.termux.TermuxConstants;
 import com.termux.shared.termux.TermuxConstants.TERMUX_APP.TERMUX_ACTIVITY;
 import com.termux.app.activities.HelpActivity;
@@ -180,6 +181,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_SHARE_TRANSCRIPT_ID = 1;
     private static final int CONTEXT_MENU_SHARE_SELECTED_TEXT = 10;
     private static final int CONTEXT_MENU_AUTOFILL_USERNAME = 11;
+    private static final int CONTEXT_MENU_OPEN_HYPERLINK = 12;
+    private static final int CONTEXT_MENU_COPY_HYPERLINK = 13;
     private static final int CONTEXT_MENU_AUTOFILL_PASSWORD = 2;
     private static final int CONTEXT_MENU_RESET_TERMINAL_ID = 3;
     private static final int CONTEXT_MENU_KILL_PROCESS_ID = 4;
@@ -632,7 +635,12 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (currentSession == null) return;
 
         boolean autoFillEnabled = mTerminalView.isAutoFillEnabled();
+        String hyperlink = mTerminalView.getContextHyperlink();
 
+        if (!DataUtils.isNullOrEmpty(hyperlink)) {
+            menu.add(Menu.NONE, CONTEXT_MENU_OPEN_HYPERLINK, Menu.NONE, R.string.action_open_link);
+            menu.add(Menu.NONE, CONTEXT_MENU_COPY_HYPERLINK, Menu.NONE, R.string.action_copy_link);
+        }
         menu.add(Menu.NONE, CONTEXT_MENU_SELECT_URL_ID, Menu.NONE, R.string.action_select_url);
         menu.add(Menu.NONE, CONTEXT_MENU_SHARE_TRANSCRIPT_ID, Menu.NONE, R.string.action_share_transcript);
         if (!DataUtils.isNullOrEmpty(mTerminalView.getStoredSelectedText()))
@@ -662,6 +670,13 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         TerminalSession session = getCurrentSession();
 
         switch (item.getItemId()) {
+            case CONTEXT_MENU_OPEN_HYPERLINK:
+                ShareUtils.openUrl(this, mTerminalView.getContextHyperlink());
+                return true;
+            case CONTEXT_MENU_COPY_HYPERLINK:
+                ShareUtils.copyTextToClipboard(this, mTerminalView.getContextHyperlink(),
+                    getString(R.string.msg_link_copied_to_clipboard));
+                return true;
             case CONTEXT_MENU_SELECT_URL_ID:
                 mTermuxTerminalViewClient.showUrlSelection();
                 return true;

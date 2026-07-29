@@ -1,23 +1,33 @@
 package com.termux.app.terminal;
 
 import android.annotation.SuppressLint;
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
+import android.content.ClipDescription;
 import android.content.ClipboardManager;
+import android.content.ContentResolver;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.Typeface;
+import android.content.res.ColorStateList;
+import android.net.Uri;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
 import android.text.TextUtils;
 import android.widget.ListView;
+import android.widget.ProgressBar;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.termux.R;
 import com.termux.shared.interact.ShareUtils;
+import com.termux.shared.notification.NotificationUtils;
+import com.termux.shared.termux.notification.TermuxNotificationUtils;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
 import com.termux.shared.termux.interact.TextInputDialogUtils;
 import com.termux.app.TermuxActivity;
@@ -27,14 +37,22 @@ import com.termux.app.TermuxService;
 import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
 import com.termux.shared.termux.terminal.io.BellHandler;
 import com.termux.shared.logger.Logger;
+import com.termux.terminal.GhosttyTerminal;
 import com.termux.terminal.TerminalColors;
+import com.termux.terminal.TerminalOutput;
 import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TerminalSessionClient;
-import com.termux.terminal.TextStyle;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Properties;
 
 /** The {@link TerminalSessionClient} implementation that may require an {@link Activity} for its interface methods. */
@@ -44,6 +62,24 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
     private static final int MAX_SESSIONS = 8;
 
+    static final int MAX_OSC_CLIPBOARD_BYTES = 16 * 1024 * 1024;
+    private static final int MAX_OSC_NOTIFICATION_CHARS = 4096;
+    private static final long OSC_NOTIFICATION_MIN_INTERVAL_MS = 1000;
+    private static final long OSC_NOTIFICATION_DUPLICATE_INTERVAL_MS = 5000;
+    private static final long OSC_PROGRESS_TIMEOUT_MS = 15000;
+    private static final int OSC_PROGRESS_ERROR_COLOR = 0xffd32f2f;
+    private static final int OSC_PROGRESS_NORMAL_COLOR = 0xff2196f3;
+    private static final String OSC_NOTIFICATION_CHANNEL_ID =
+        "termux_osc_notification_channel";
+    private static final String OSC_NOTIFICATION_CHANNEL_NAME =
+        "Terminal notifications";
+    private long mLastOscNotificationTime;
+    private String mLastOscNotificationTitle;
+    private String mLastOscNotificationBody;
+    private final android.os.Handler mMainHandler =
+        new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable mHideProgressRunnable;
+
     private SoundPool mBellSoundPool;
 
     private int mBellSoundId;
@@ -52,6 +88,10 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
     public TermuxTerminalSessionActivityClient(TermuxActivity activity) {
         this.mActivity = activity;
+        this.mHideProgressRunnable = () -> {
+            ProgressBar progress = mActivity.findViewById(R.id.terminal_progress_bar);
+            if (progress != null) progress.setVisibility(android.view.View.GONE);
+        };
     }
 
     /**
@@ -96,6 +136,8 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         // Store current session in shared preferences so that it can be restored later in
         // {@link #onStart} if needed.
         setCurrentStoredSession();
+        mMainHandler.removeCallbacks(mHideProgressRunnable);
+        mHideProgressRunnable.run();
 
         // Release mBellSoundPool resources, specially to prevent exceptions like the following to be thrown
         // java.util.concurrent.TimeoutException: android.media.SoundPool.finalize() timed out after 10 seconds
@@ -133,6 +175,100 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         }
 
         termuxSessionListNotifyUpdated();
+    }
+
+    @Override
+    public void onWorkingDirectoryChanged(@NonNull TerminalSession session,
+                                          @Nullable String workingDirectory) {
+        // The value is consumed lazily by TerminalSession.getCwd().
+    }
+
+    @Override
+    public void onMouseShapeChanged(@NonNull TerminalSession session, int shape) {
+        if (mActivity.isVisible() && mActivity.getCurrentSession() == session)
+            mActivity.getTerminalView().setMouseShape(shape);
+    }
+
+    @Override
+    public void onDesktopNotification(@NonNull TerminalSession session,
+                                      @Nullable String title, @Nullable String body) {
+        if (!mActivity.isVisible() || mActivity.getCurrentSession() != session) return;
+        title = sanitizeOscNotificationText(title);
+        body = sanitizeOscNotificationText(body);
+        if (TextUtils.isEmpty(title)) title = TextUtils.isEmpty(session.getTitle())
+            ? TermuxConstants.TERMUX_APP_NAME : session.getTitle();
+        if (TextUtils.isEmpty(body)) return;
+
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - mLastOscNotificationTime < OSC_NOTIFICATION_MIN_INTERVAL_MS ||
+            (TextUtils.equals(title, mLastOscNotificationTitle) &&
+             TextUtils.equals(body, mLastOscNotificationBody) &&
+             now - mLastOscNotificationTime < OSC_NOTIFICATION_DUPLICATE_INTERVAL_MS)) {
+            return;
+        }
+        mLastOscNotificationTime = now;
+        mLastOscNotificationTitle = title;
+        mLastOscNotificationBody = body;
+
+        NotificationUtils.setupNotificationChannel(
+            mActivity, OSC_NOTIFICATION_CHANNEL_ID, OSC_NOTIFICATION_CHANNEL_NAME,
+            NotificationManager.IMPORTANCE_DEFAULT);
+        PendingIntent intent = PendingIntent.getActivity(
+            mActivity, 0, TermuxActivity.newInstance(mActivity),
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder builder = NotificationUtils.geNotificationBuilder(
+            mActivity, OSC_NOTIFICATION_CHANNEL_ID, Notification.PRIORITY_DEFAULT,
+            title, body, body, intent, null, NotificationUtils.NOTIFICATION_MODE_SILENT);
+        NotificationManager manager = NotificationUtils.getNotificationManager(mActivity);
+        if (builder != null && manager != null) {
+            builder.setSmallIcon(R.drawable.ic_service_notification)
+                .setAutoCancel(true).setShowWhen(true);
+            manager.notify(TermuxNotificationUtils.getNextNotificationId(mActivity),
+                           builder.build());
+        }
+    }
+
+    @Override
+    public void onProgressReport(@NonNull TerminalSession session, int state, int value) {
+        if (!mActivity.isVisible() || mActivity.getCurrentSession() != session) return;
+        ProgressBar progress = mActivity.findViewById(R.id.terminal_progress_bar);
+        if (progress == null) return;
+        mMainHandler.removeCallbacks(mHideProgressRunnable);
+        if (state == 0) {
+            progress.setVisibility(android.view.View.GONE);
+            return;
+        }
+        progress.setVisibility(android.view.View.VISIBLE);
+        ColorStateList progressColor = ColorStateList.valueOf(
+            state == 2 ? OSC_PROGRESS_ERROR_COLOR : OSC_PROGRESS_NORMAL_COLOR);
+        progress.setProgressTintList(progressColor);
+        progress.setIndeterminateTintList(progressColor);
+        if (state == 3 || ((state == 1 || state == 2) && value < 0)) {
+            progress.setIndeterminate(true);
+        } else {
+            progress.setIndeterminate(false);
+            if (value >= 0) progress.setProgress(Math.max(0, Math.min(100, value)));
+        }
+        progress.setContentDescription(mActivity.getString(
+            R.string.terminal_progress_description, state, value));
+        mMainHandler.postDelayed(mHideProgressRunnable, OSC_PROGRESS_TIMEOUT_MS);
+    }
+
+    static String sanitizeOscNotificationText(@Nullable String value) {
+        if (value == null) return null;
+        StringBuilder clean = new StringBuilder(
+            Math.min(value.length(), MAX_OSC_NOTIFICATION_CHARS));
+        for (int i = 0; i < value.length();) {
+            int codePoint = value.codePointAt(i);
+            int charCount = Character.charCount(codePoint);
+            i += charCount;
+            if (clean.length() + charCount > MAX_OSC_NOTIFICATION_CHARS) break;
+            if (codePoint == '\n' || codePoint == '\t' ||
+                (codePoint >= 0x20 && (codePoint < 0x7f || codePoint > 0x9f))) {
+                clean.appendCodePoint(codePoint);
+            }
+        }
+        return clean.toString();
     }
 
     @Override
@@ -188,12 +324,162 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     }
 
     @Override
+    public int onOscClipboard(@NonNull TerminalSession session, int location,
+                              String mimeType, byte[] data, boolean clear) {
+        if (!mActivity.isVisible() || mActivity.getCurrentSession() != session)
+            return TerminalOutput.OSC_CLIPBOARD_RESULT_DENIED;
+        if (location != 0) return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+        ClipboardManager clipboard = (ClipboardManager)
+            mActivity.getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard == null) return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+
+        try {
+            if (clear) {
+                clipboard.clearPrimaryClip();
+                return TerminalOutput.OSC_CLIPBOARD_RESULT_SUCCESS;
+            }
+
+            if (!isPlainTextMimeType(mimeType))
+                return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+            if (data == null)
+                return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
+
+            String text;
+            try {
+                text = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(data))
+                    .toString();
+            } catch (CharacterCodingException e) {
+                return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
+            }
+            if (text.indexOf('\0') >= 0)
+                return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
+
+            clipboard.setPrimaryClip(ClipData.newPlainText("OSC clipboard", text));
+            return TerminalOutput.OSC_CLIPBOARD_RESULT_SUCCESS;
+        } catch (SecurityException e) {
+            return TerminalOutput.OSC_CLIPBOARD_RESULT_DENIED;
+        } catch (RuntimeException e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to update OSC clipboard", e);
+            return TerminalOutput.OSC_CLIPBOARD_RESULT_IO_ERROR;
+        }
+    }
+
+    @Override
+    public byte[] onOscClipboardRead(@NonNull TerminalSession session, int location) {
+        if (!mActivity.isVisible() || mActivity.getCurrentSession() != session ||
+            location != 0) return null;
+        ClipboardManager clipboard = (ClipboardManager)
+            mActivity.getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard == null) return null;
+
+        try {
+            ClipData clip = clipboard.getPrimaryClip();
+            if (clip == null || clip.getItemCount() == 0) return new byte[0];
+            ClipDescription description = clip.getDescription();
+            ContentResolver resolver = mActivity.getContentResolver();
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                ClipData.Item item = clip.getItemAt(i);
+                Uri uri = item.getUri();
+                if (uri == null || !isImageClipboardUri(resolver, description, uri))
+                    continue;
+                try (InputStream input =
+                         resolver.openInputStream(uri)) {
+                    if (input == null) return null;
+                    return readClipboardBytes(input);
+                }
+            }
+
+            ClipData.Item item = clip.getItemAt(0);
+            CharSequence text = item.getText();
+            if (text != null) return encodeClipboardText(text);
+
+            String html = item.getHtmlText();
+            if (html != null) return encodeClipboardText(html);
+
+            Uri uri = item.getUri();
+            if (uri != null) {
+                String mimeType = resolver.getType(uri);
+                if (mimeType != null &&
+                    ClipDescription.compareMimeTypes(mimeType, "text/*")) {
+                    try (InputStream input = resolver.openInputStream(uri)) {
+                        if (input == null) return null;
+                        return readClipboardBytes(input);
+                    }
+                }
+                return encodeClipboardText(uri.toString());
+            }
+
+            Intent intent = item.getIntent();
+            return intent == null
+                ? new byte[0]
+                : encodeClipboardText(intent.toUri(Intent.URI_INTENT_SCHEME));
+        } catch (IOException e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read OSC clipboard image", e);
+            return null;
+        } catch (SecurityException e) {
+            return null;
+        } catch (RuntimeException e) {
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read OSC clipboard", e);
+            return null;
+        }
+    }
+
+    private static boolean isImageClipboardUri(ContentResolver resolver,
+                                               ClipDescription description,
+                                               Uri uri) {
+        String mimeType = resolver.getType(uri);
+        if (mimeType != null)
+            return ClipDescription.compareMimeTypes(mimeType, "image/*");
+        return description != null && description.hasMimeType("image/*");
+    }
+
+    static byte[] readClipboardBytes(InputStream input) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        while (true) {
+            int read = input.read(buffer);
+            if (read == -1) break;
+            if (read == 0) {
+                int value = input.read();
+                if (value == -1) break;
+                if (output.size() == MAX_OSC_CLIPBOARD_BYTES)
+                    throw new IOException("OSC clipboard content is too large");
+                output.write(value);
+                continue;
+            }
+            if (read > MAX_OSC_CLIPBOARD_BYTES - output.size())
+                throw new IOException("OSC clipboard content is too large");
+            output.write(buffer, 0, read);
+        }
+        return output.toByteArray();
+    }
+
+    static byte[] encodeClipboardText(CharSequence text) throws IOException {
+        if (text.length() > MAX_OSC_CLIPBOARD_BYTES)
+            throw new IOException("OSC clipboard content is too large");
+        byte[] data = text.toString().getBytes(StandardCharsets.UTF_8);
+        if (data.length > MAX_OSC_CLIPBOARD_BYTES)
+            throw new IOException("OSC clipboard content is too large");
+        return data;
+    }
+
+    private static boolean isPlainTextMimeType(String mimeType) {
+        if (mimeType == null) return false;
+        String normalized = mimeType.toLowerCase(Locale.ROOT).replaceAll("\\s", "");
+        return "text/plain".equals(normalized) ||
+            "text/plain;charset=utf-8".equals(normalized);
+    }
+
+    @Override
     public void onPasteTextFromClipboard(@Nullable TerminalSession session) {
         if (!mActivity.isVisible()) return;
 
         String text = ShareUtils.getTextStringFromClipboardIfSet(mActivity, true);
         if (text != null)
-            mActivity.getTerminalView().mEmulator.paste(text);
+            mActivity.getTerminalView().paste(text);
     }
 
     @Override
@@ -294,6 +580,8 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         if (session == null) return;
 
         if (mActivity.getTerminalView().attachSession(session)) {
+            mMainHandler.removeCallbacks(mHideProgressRunnable);
+            mHideProgressRunnable.run();
             // notify about switched session if not already displaying the session
             notifyOfSessionChange();
         }
@@ -505,13 +793,13 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
             TerminalColors.COLOR_SCHEME.updateWith(props);
             TerminalSession session = mActivity.getCurrentSession();
-            if (session != null && session.getEmulator() != null) {
-                session.getEmulator().mColors.reset();
+            if (session != null && session.getTerminal() != null) {
+                session.getTerminal().setColorScheme(TerminalColors.COLOR_SCHEME.copyColors());
             }
             updateBackgroundColor();
 
-            final Typeface newTypeface = (fontFile.exists() && fontFile.length() > 0) ? Typeface.createFromFile(fontFile) : Typeface.MONOSPACE;
-            mActivity.getTerminalView().setTypeface(newTypeface);
+            mActivity.getTerminalView().setFontFile(
+                fontFile.exists() && fontFile.length() > 0 ? fontFile : null);
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Error in checkForFontAndColors()", e);
         }
@@ -520,8 +808,9 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     public void updateBackgroundColor() {
         if (!mActivity.isVisible()) return;
         TerminalSession session = mActivity.getCurrentSession();
-        if (session != null && session.getEmulator() != null) {
-            mActivity.getWindow().getDecorView().setBackgroundColor(session.getEmulator().mColors.mCurrentColors[TextStyle.COLOR_INDEX_BACKGROUND]);
+        if (session != null && session.getTerminal() != null) {
+            mActivity.getWindow().getDecorView().setBackgroundColor(
+                session.getTerminal().getBackgroundColor());
         }
     }
 

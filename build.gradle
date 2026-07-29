@@ -8,6 +8,38 @@ buildscript {
     }
 }
 
+ext {
+    nativeSourcesDir = new File(rootProject.projectDir, "build/native-sources")
+    nativeSourceRevisions = [
+        ghostty: [
+            repository: "https://github.com/ghostty-org/ghostty.git",
+            revision: "74d0c72fd9318ad3ab95bfb56f6c2d995e267e2e"],
+        freetype: [
+            repository: "https://github.com/freetype/freetype.git",
+            revision: "920c5502cc3ddda88f6c7d85ee834ac611bb11cc"],
+        harfbuzz: [
+            repository: "https://github.com/harfbuzz/harfbuzz.git",
+            revision: "ea6a172f84f2cbcfed803b5ae71064c7afb6b5c2"],
+        libpng: [
+            repository: "https://github.com/pnggroup/libpng.git",
+            revision: "ed217e3e601d8e462f7fd1e04bed43ac42212429"]]
+}
+
+tasks.register("prepareNativeSources", Exec) {
+    workingDir rootProject.projectDir
+    commandLine "bash", "scripts/prepare-native-sources.sh"
+    environment "NATIVE_SOURCES_DIR", rootProject.ext.nativeSourcesDir.absolutePath
+    inputs.file rootProject.file("scripts/prepare-native-sources.sh")
+    rootProject.ext.nativeSourceRevisions.each { dependency, source ->
+        environment "${dependency.toUpperCase()}_REPOSITORY", source.repository
+        environment "${dependency.toUpperCase()}_REVISION", source.revision
+        inputs.property "nativeSource.${dependency}.repository", source.repository
+        inputs.property "nativeSource.${dependency}.revision", source.revision
+        outputs.file new File(rootProject.ext.nativeSourcesDir,
+            ".revisions/$dependency")
+    }
+}
+
 allprojects {
     repositories {
         google()

@@ -4,6 +4,27 @@ import java.io.UnsupportedEncodingException;
 
 public class TerminalTest extends TerminalTestCase {
 
+	public void testNormalizeReportedWorkingDirectory() {
+		assertNull(TerminalSession.normalizeReportedWorkingDirectory(null));
+		assertNull(TerminalSession.normalizeReportedWorkingDirectory(""));
+		assertEquals("/data/data/com.termux/files/home",
+			TerminalSession.normalizeReportedWorkingDirectory(
+				"/data/data/com.termux/files/home"));
+		assertEquals("/tmp/a b", TerminalSession.normalizeReportedWorkingDirectory(
+			"file:///tmp/a%20b"));
+		assertEquals("/tmp", TerminalSession.normalizeReportedWorkingDirectory(
+			"file://localhost/tmp"));
+		assertEquals("/data/local/tmp",
+			TerminalSession.normalizeReportedWorkingDirectory(
+				"kitty-shell-cwd:///data/local/tmp"));
+		assertNull(TerminalSession.normalizeReportedWorkingDirectory("relative/path"));
+		assertNull(TerminalSession.normalizeReportedWorkingDirectory(
+			"file://remote.example/tmp"));
+		assertNull(TerminalSession.normalizeReportedWorkingDirectory(
+			"https://localhost/tmp"));
+		assertNull(TerminalSession.normalizeReportedWorkingDirectory("file://[%"));
+	}
+
 	public void testCursorPositioning() throws Exception {
 		withTerminalSized(10, 10).placeCursorAndAssert(1, 2).placeCursorAndAssert(3, 5).placeCursorAndAssert(2, 2).enterString("A")
 				.assertCursorAt(2, 3);

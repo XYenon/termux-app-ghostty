@@ -40,8 +40,7 @@ import com.termux.shared.termux.TermuxUtils;
 import com.termux.shared.termux.data.TermuxUrlUtils;
 import com.termux.shared.view.KeyboardUtils;
 import com.termux.shared.view.ViewUtils;
-import com.termux.terminal.KeyHandler;
-import com.termux.terminal.TerminalEmulator;
+import com.termux.terminal.GhosttyTerminal;
 import com.termux.terminal.TerminalSession;
 
 import java.util.ArrayList;
@@ -115,7 +114,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
         mTerminalCursorBlinkerStateAlreadySet = false;
 
-        if (mActivity.getTerminalView().mEmulator != null) {
+        if (mActivity.getTerminalView().hasTerminal()) {
             // Start terminal cursor blinking if enabled
             // If emulator is already set, then start blinker now, otherwise wait for onEmulatorSet()
             // event to start it. This is needed since onEmulatorSet() may not be called after
@@ -138,6 +137,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
      */
     public void onReloadProperties() {
         setSessionShortcuts();
+        setTerminalCursorStyle();
     }
 
     /**
@@ -156,6 +156,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
      */
     @Override
     public void onEmulatorSet() {
+        setTerminalCursorStyle();
         if (!mTerminalCursorBlinkerStateAlreadySet) {
             // Start terminal cursor blinking if enabled
             // We need to wait for the first session to be attached that's set in
@@ -184,26 +185,34 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
     @Override
     public void onSingleTapUp(MotionEvent e) {
-        TerminalEmulator term = mActivity.getCurrentSession().getEmulator();
-
-        if (mActivity.getProperties().shouldOpenTerminalTranscriptURLOnClick()) {
-            int[] columnAndRow = mActivity.getTerminalView().getColumnAndRow(e, true);
-            String wordAtTap = term.getScreen().getWordAtLocation(columnAndRow[0], columnAndRow[1]);
-            LinkedHashSet<CharSequence> urlSet = TermuxUrlUtils.extractUrls(wordAtTap);
-
-            if (!urlSet.isEmpty()) {
-                String url = (String) urlSet.iterator().next();
+        GhosttyTerminal terminal = mActivity.getCurrentSession().getTerminal();
+        if (terminal != null &&
+            mActivity.getProperties().shouldOpenTerminalTranscriptURLOnClick()) {
+            int[] columnAndRow =
+                mActivity.getTerminalView().getColumnAndRow(e, true);
+            String wordAtTap =
+                terminal.getWordAt(columnAndRow[0], columnAndRow[1]);
+            String url = getUrlAtTap(wordAtTap);
+            if (url != null) {
                 ShareUtils.openUrl(mActivity, url);
                 return;
             }
         }
 
-        if (!term.isMouseTrackingActive() && !e.isFromSource(InputDevice.SOURCE_MOUSE)) {
+        if (terminal != null && !terminal.isMouseTrackingActive() &&
+            !e.isFromSource(InputDevice.SOURCE_MOUSE)) {
             if (!KeyboardUtils.areDisableSoftKeyboardFlagsSet(mActivity))
                 KeyboardUtils.showSoftKeyboard(mActivity, mActivity.getTerminalView());
             else
                 Logger.logVerbose(LOG_TAG, "Not showing soft keyboard onSingleTapUp since its disabled");
         }
+    }
+
+    static String getUrlAtTap(String wordAtTap) {
+        if (wordAtTap == null || wordAtTap.isEmpty()) return null;
+        LinkedHashSet<CharSequence> urlSet =
+            TermuxUrlUtils.extractUrls(wordAtTap);
+        return urlSet.isEmpty() ? null : (String) urlSet.iterator().next();
     }
 
     @Override
@@ -292,7 +301,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
     public boolean onKeyUp(int keyCode, KeyEvent e) {
         // If emulator is not set, like if bootstrap installation failed and user dismissed the error
         // dialog, then just exit the activity, otherwise they will be stuck in a broken state.
-        if (keyCode == KeyEvent.KEYCODE_BACK && mActivity.getTerminalView().mEmulator == null) {
+        if (keyCode == KeyEvent.KEYCODE_BACK && !mActivity.getTerminalView().hasTerminal()) {
             mActivity.finishActivityIfNotFinishing();
             return true;
         }
@@ -453,8 +462,11 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             }
 
             if (resultingKeyCode != -1) {
-                TerminalEmulator term = session.getEmulator();
-                session.write(KeyHandler.getCode(resultingKeyCode, 0, term.isCursorKeysApplicationMode(), term.isKeypadApplicationMode()));
+                GhosttyTerminal terminal = session.getTerminal();
+                if (terminal != null) {
+                    terminal.sendKey(resultingKeyCode,
+                        GhosttyTerminal.KEY_ACTION_PRESS, 0, null, 0);
+                }
             } else if (resultingCodePoint != -1) {
                 session.writeCodePoint(altDown, resultingCodePoint);
             }
@@ -669,6 +681,15 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         }
     }
 
+    private void setTerminalCursorStyle() {
+        TerminalSession session = mActivity.getCurrentSession();
+        GhosttyTerminal terminal = session == null ? null : session.getTerminal();
+        if (terminal != null) {
+            terminal.setDefaultCursor(
+                mActivity.getProperties().getTerminalCursorStyle(), false);
+        }
+    }
+
 
 
     public void shareSessionTranscript() {
@@ -796,7 +817,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
         String text = ShareUtils.getTextStringFromClipboardIfSet(mActivity, true);
         if (text != null)
-            session.getEmulator().paste(text);
+            session.getTerminal().paste(text);
     }
 
 }

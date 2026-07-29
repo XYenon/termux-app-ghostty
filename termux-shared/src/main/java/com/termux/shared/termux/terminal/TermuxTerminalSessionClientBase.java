@@ -4,6 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.termux.shared.logger.Logger;
+import com.termux.terminal.TerminalOutput;
 import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TerminalSessionClient;
 
@@ -21,11 +22,40 @@ public class TermuxTerminalSessionClientBase implements TerminalSessionClient {
     }
 
     @Override
+    public void onWorkingDirectoryChanged(@NonNull TerminalSession session,
+                                          @Nullable String workingDirectory) {
+    }
+
+    @Override
+    public void onMouseShapeChanged(@NonNull TerminalSession session, int shape) {
+    }
+
+    @Override
+    public void onDesktopNotification(@NonNull TerminalSession session,
+                                      @Nullable String title, @Nullable String body) {
+    }
+
+    @Override
+    public void onProgressReport(@NonNull TerminalSession session, int state, int progress) {
+    }
+
+    @Override
     public void onSessionFinished(@NonNull TerminalSession finishedSession) {
     }
 
     @Override
     public void onCopyTextToClipboard(@NonNull TerminalSession session, String text) {
+    }
+
+    @Override
+    public int onOscClipboard(@NonNull TerminalSession session, int location,
+                              String mimeType, byte[] data, boolean clear) {
+        return TerminalOutput.OSC_CLIPBOARD_RESULT_DENIED;
+    }
+
+    @Override
+    public byte[] onOscClipboardRead(@NonNull TerminalSession session, int location) {
+        return null;
     }
 
     @Override

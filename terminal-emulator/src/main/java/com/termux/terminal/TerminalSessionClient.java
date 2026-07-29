@@ -14,9 +14,24 @@ public interface TerminalSessionClient {
 
     void onTitleChanged(@NonNull TerminalSession changedSession);
 
+    void onWorkingDirectoryChanged(@NonNull TerminalSession changedSession,
+                                   @Nullable String workingDirectory);
+
+    void onMouseShapeChanged(@NonNull TerminalSession changedSession, int shape);
+
+    void onDesktopNotification(@NonNull TerminalSession session,
+                               @Nullable String title, @Nullable String body);
+
+    void onProgressReport(@NonNull TerminalSession session, int state, int progress);
+
     void onSessionFinished(@NonNull TerminalSession finishedSession);
 
     void onCopyTextToClipboard(@NonNull TerminalSession session, String text);
+
+    int onOscClipboard(@NonNull TerminalSession session, int location,
+                       String mimeType, byte[] data, boolean clear);
+
+    byte[] onOscClipboardRead(@NonNull TerminalSession session, int location);
 
     void onPasteTextFromClipboard(@Nullable TerminalSession session);
 

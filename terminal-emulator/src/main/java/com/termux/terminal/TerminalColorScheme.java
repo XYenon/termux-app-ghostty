@@ -123,4 +123,8 @@ public final class TerminalColorScheme {
         }
     }
 
+    public int[] copyColors() {
+        return mDefaultColors.clone();
+    }
+
 }

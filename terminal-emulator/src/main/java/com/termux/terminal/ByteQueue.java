@@ -1,6 +1,6 @@
 package com.termux.terminal;
 
-/** A circular byte buffer allowing one producer and one consumer thread. */
+/** A bounded circular byte buffer allowing multiple producer threads. */
 final class ByteQueue {
 
     private final byte[] mBuffer;
@@ -14,7 +14,7 @@ final class ByteQueue {
 
     public synchronized void close() {
         mOpen = false;
-        notify();
+        notifyAll();
     }
 
     public synchronized int read(byte[] buffer, boolean block) {
@@ -47,8 +47,12 @@ final class ByteQueue {
             offset += bytesToCopy;
             totalRead += bytesToCopy;
         }
-        if (wasFull) notify();
+        if (wasFull) notifyAll();
         return totalRead;
+    }
+
+    public synchronized boolean hasReadableBytes() {
+        return mOpen && mStoredBytes > 0;
     }
 
     /**
@@ -100,7 +104,7 @@ final class ByteQueue {
                     bytesToWriteBeforeWaiting -= bytesToCopy;
                     mStoredBytes += bytesToCopy;
                 }
-                if (wasEmpty) notify();
+                if (wasEmpty) notifyAll();
             }
         }
         return true;

@@ -15,6 +15,8 @@
 
     <string name="application_name">&TERMUX_APP_NAME;</string>
     <string name="shared_user_label">&TERMUX_APP_NAME; user</string>
+    <string name="terminal_progress_description_default">Terminal progress</string>
+    <string name="terminal_progress_description">Terminal progress state %1$d, value %2$d</string>
 
 
 
@@ -69,9 +71,12 @@
 
     <!-- Terminal Popup -->
     <string name="action_select_url">Select URL</string>
+    <string name="action_open_link">Open link</string>
+    <string name="action_copy_link">Copy link</string>
     <string name="title_select_url_dialog">Click URL to copy or long press to open</string>
     <string name="title_select_url_none_found">No URL found in the terminal.</string>
     <string name="msg_select_url_copied_to_clipboard">URL copied to clipboard</string>
+    <string name="msg_link_copied_to_clipboard">Link copied to clipboard</string>
 
     <string name="action_share_transcript">Share transcript</string>
     <string name="title_share_transcript">Terminal transcript</string>
