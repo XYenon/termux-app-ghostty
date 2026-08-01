@@ -262,9 +262,9 @@ public class TextSelectionCursorController implements CursorController {
         return row < 0 ? -1 : row >= rows ? 1 : 0;
     }
 
-    public void decrementYTextSelectionCursors(int decrement) {
-        mSelY1 -= decrement;
-        mSelY2 -= decrement;
+    public void shiftSelectionRows(int rowShift) {
+        mSelY1 += rowShift;
+        mSelY2 += rowShift;
     }
 
     public boolean onTouchEvent(MotionEvent event) {

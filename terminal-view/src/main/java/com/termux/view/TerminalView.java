@@ -656,11 +656,24 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
             } else if (mTerminal.isAlternateBufferActive()) {
                 handleKeyCode(up ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN, 0);
             } else {
-                mTerminal.scrollViewport(up ? -1 : 1);
+                scrollViewport(up ? -1 : 1);
             }
         }
         awakenScrollBars();
         requestRender();
+    }
+
+    private void scrollViewport(int rows) {
+        if (!isSelectingText()) {
+            mTerminal.scrollViewport(rows);
+            return;
+        }
+
+        int selectionRowShift = scrollSelectionViewport(rows);
+        if (selectionRowShift != 0) {
+            mTextSelectionCursorController.shiftSelectionRows(selectionRowShift);
+            renderTextSelection();
+        }
     }
 
     /** Overriding {@link View#onGenericMotionEvent(MotionEvent)}. */
@@ -1233,8 +1246,8 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
     }
 
     /**
-     * Scroll while a selection handle is being dragged and return the row
-     * adjustment needed to keep existing endpoints on the same terminal rows.
+     * Scroll while a selection is active and return the row adjustment needed
+     * to keep existing endpoints on the same terminal rows.
      */
     public int scrollSelectionViewport(int rows) {
         if (mTerminal == null || mTerminal.isAlternateBufferActive()) return 0;
@@ -1712,12 +1725,6 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
             mClient.copyModeChanged(isSelectingText());
             clearNativeSelection();
             requestRender();
-        }
-    }
-
-    private void decrementYTextSelectionCursors(int decrement) {
-        if (mTextSelectionCursorController != null) {
-            mTextSelectionCursorController.decrementYTextSelectionCursors(decrement);
         }
     }
 
