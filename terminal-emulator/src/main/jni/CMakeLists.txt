@@ -63,7 +63,9 @@ target_compile_definitions(termux PRIVATE GHOSTTY_STATIC)
 target_include_directories(termux PRIVATE
     "${GHOSTTY_PREFIX}/include"
     "${CMAKE_CURRENT_BINARY_DIR}/libpng")
-target_link_options(termux PRIVATE "-Wl,-z,max-page-size=16384")
+target_link_options(termux PRIVATE
+    "-Wl,-z,max-page-size=16384"
+    "-Wl,-z,common-page-size=16384")
 target_link_libraries(termux PRIVATE
     ghostty-vt
     png_static
