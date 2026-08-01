@@ -1697,6 +1697,12 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         mContextHyperlink = getHyperlinkAt(point[0], point[1]);
         showTextSelectionCursors(event);
         mClient.copyModeChanged(isSelectingText());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            // The selection handles may receive the rest of the long-press
+            // gesture, so do not rely on TerminalView receiving ACTION_UP to
+            // make the floating toolbar visible.
+            showFloatingToolbar();
+        }
 
         requestRender();
     }
@@ -1772,6 +1778,7 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
     private void showFloatingToolbar() {
         if (getTextSelectionActionMode() != null) {
             int delay = ViewConfiguration.getDoubleTapTimeout();
+            removeCallbacks(mShowFloatingToolbar);
             postDelayed(mShowFloatingToolbar, delay);
         }
     }
@@ -1788,13 +1795,22 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && getTextSelectionActionMode() != null) {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_MOVE:
-                    hideFloatingToolbar();
+                    if (shouldHideFloatingToolbarForMove(
+                            mTextSelectionCursorController.isSelectionStartDragged(),
+                            mTextSelectionCursorController.isSelectionEndDragged())) {
+                        hideFloatingToolbar();
+                    }
                     break;
                 case MotionEvent.ACTION_UP:  // fall through
                 case MotionEvent.ACTION_CANCEL:
                     showFloatingToolbar();
             }
         }
+    }
+
+    static boolean shouldHideFloatingToolbarForMove(boolean startHandleDragged,
+                                                    boolean endHandleDragged) {
+        return startHandleDragged || endHandleDragged;
     }
 
 }
