@@ -99,6 +99,45 @@ struct RenderCell {
     std::string text;
 };
 
+struct CursorFrameState {
+    bool drawn = false;
+    uint16_t x = 0;
+    uint16_t y = 0;
+    GhosttyRenderStateCursorVisualStyle style =
+        GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK;
+};
+
+constexpr bool cursor_states_equal(const CursorFrameState &left,
+                                   const CursorFrameState &right) {
+    if (left.drawn != right.drawn) return false;
+    return !left.drawn ||
+        (left.x == right.x && left.y == right.y &&
+         left.style == right.style);
+}
+
+constexpr bool cursor_row_needs_redraw(const CursorFrameState &previous,
+                                       const CursorFrameState &current,
+                                       uint16_t row) {
+    return (previous.drawn && previous.y == row) ||
+        (current.drawn && current.y == row);
+}
+
+static_assert(cursor_row_needs_redraw(
+    {true, 1, 2, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
+    {true, 8, 2, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK}, 2));
+static_assert(cursor_row_needs_redraw(
+    {true, 1, 2, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
+    {true, 1, 3, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK}, 2));
+static_assert(cursor_row_needs_redraw(
+    {true, 1, 2, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
+    {true, 1, 3, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK}, 3));
+static_assert(!cursor_row_needs_redraw(
+    {true, 1, 2, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
+    {true, 1, 3, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK}, 4));
+static_assert(cursor_row_needs_redraw(
+    {true, 1, 2, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
+    {}, 2));
+
 struct TermuxVulkanRenderer {
     TermuxGhosttyEngine *engine = nullptr;
     ANativeWindow *window = nullptr;
@@ -130,10 +169,10 @@ struct TermuxVulkanRenderer {
     std::vector<uint8_t> frame;
     bool frame_initialized = false;
     bool frame_pending_upload = false;
-    bool last_cursor_visible = true;
+    bool frame_cursor_initialized = false;
+    CursorFrameState frame_cursor;
     uint16_t last_cols = 0;
     uint16_t last_rows = 0;
-    bool pending_cursor_visible = true;
     uint16_t pending_cols = 0;
     uint16_t pending_rows = 0;
     uint32_t requested_width = 0;
@@ -1005,13 +1044,40 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
         renderer->extent.height * 4;
     bool dimensions_changed = renderer->frame.size() != frame_size ||
         cols != renderer->last_cols || rows != renderer->last_rows;
-    bool cursor_changed = !renderer->frame_initialized ||
-        cursor_visible != renderer->last_cursor_visible;
+
+    bool terminal_cursor_visible = false;
+    bool cursor_has_position = false;
+    CursorFrameState current_cursor;
+    // Ghostty tracks cursor state independently from row dirtiness. Since the
+    // framebuffer includes cursor pixels, compare it explicitly so moving the
+    // cursor also restores the row containing its previous position.
+    ghostty_render_state_get(engine->render_state,
+                             GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
+                             &terminal_cursor_visible);
+    ghostty_render_state_get(
+        engine->render_state,
+        GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE,
+        &cursor_has_position);
+    current_cursor.drawn =
+        cursor_visible && terminal_cursor_visible && cursor_has_position;
+    if (current_cursor.drawn) {
+        ghostty_render_state_get(
+            engine->render_state,
+            GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X, &current_cursor.x);
+        ghostty_render_state_get(
+            engine->render_state,
+            GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y, &current_cursor.y);
+        ghostty_render_state_get(
+            engine->render_state,
+            GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE,
+            &current_cursor.style);
+    }
+    bool cursor_changed = !renderer->frame_cursor_initialized ||
+        !cursor_states_equal(renderer->frame_cursor, current_cursor);
     bool changed = renderer->frame_pending_upload ||
         !renderer->frame_initialized || dimensions_changed ||
         cursor_changed || glyphs_changed ||
         dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE;
-    renderer->pending_cursor_visible = cursor_visible;
     renderer->pending_cols = cols;
     renderer->pending_rows = rows;
     if (!changed) {
@@ -1021,7 +1087,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
 
     bool kitty_graphics = has_kitty_graphics(renderer);
     bool full_redraw = !renderer->frame_initialized || dimensions_changed ||
-        cursor_changed || glyphs_changed || kitty_graphics ||
+        glyphs_changed || kitty_graphics ||
         dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL;
     ghostty_render_state_colors_get(engine->render_state, &colors);
 
@@ -1055,7 +1121,10 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
         ghostty_render_state_row_get(
             engine->row_iterator, GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
             &row_dirty);
-        if (!full_redraw && !row_dirty) {
+        bool cursor_row = !full_redraw && cursor_changed &&
+            cursor_row_needs_redraw(
+                renderer->frame_cursor, current_cursor, row_index);
+        if (!full_redraw && !row_dirty && !cursor_row) {
             ++row_index;
             continue;
         }
@@ -1199,35 +1268,15 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
         draw_kitty_layer(renderer,
                          GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
 
-    bool terminal_cursor_visible = false;
-    bool cursor_has_position = false;
-    uint16_t cursor_x = 0, cursor_y = 0;
-    GhosttyRenderStateCursorVisualStyle cursor_style =
-        GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK;
-    ghostty_render_state_get(engine->render_state,
-                             GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
-                             &terminal_cursor_visible);
-    ghostty_render_state_get(
-        engine->render_state,
-        GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE,
-        &cursor_has_position);
-    if (cursor_visible && terminal_cursor_visible && cursor_has_position) {
-        ghostty_render_state_get(
-            engine->render_state,
-            GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X, &cursor_x);
-        ghostty_render_state_get(
-            engine->render_state,
-            GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y, &cursor_y);
-        ghostty_render_state_get(
-            engine->render_state,
-            GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE, &cursor_style);
+    if (current_cursor.drawn) {
         GhosttyColorRgb cursor_color =
             colors.cursor_has_value ? colors.cursor : colors.foreground;
-        int left = cursor_x * renderer->fonts.cell_width;
-        int top = cursor_y * renderer->fonts.cell_height;
+        int left = current_cursor.x * renderer->fonts.cell_width;
+        int top = current_cursor.y * renderer->fonts.cell_height;
         int right = left + renderer->fonts.cell_width;
         int bottom = top + renderer->fonts.cell_height;
-        switch (cursor_style) {
+        bool hollow = false;
+        switch (current_cursor.style) {
             case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR:
                 right = left + std::max(1u, renderer->fonts.cell_width / 5);
                 break;
@@ -1247,15 +1296,19 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
                 fill_rect(&renderer->frame, renderer->extent.width,
                           renderer->extent.height, right - 1, top, right,
                           bottom, cursor_color);
-                *frame_changed = true;
-                return true;
+                hollow = true;
+                break;
             default:
                 break;
         }
-        fill_rect(&renderer->frame, renderer->extent.width,
-                  renderer->extent.height, left, top, right, bottom,
-                  cursor_color);
+        if (!hollow) {
+            fill_rect(&renderer->frame, renderer->extent.width,
+                      renderer->extent.height, left, top, right, bottom,
+                      cursor_color);
+        }
     }
+    renderer->frame_cursor = current_cursor;
+    renderer->frame_cursor_initialized = true;
     *frame_changed = true;
     return true;
 }
@@ -1696,7 +1749,6 @@ TermuxRendererDrawResult termux_renderer_draw(
     if (uploaded == TermuxRendererDrawResult::success) {
         renderer->frame_pending_upload = false;
         renderer->frame_initialized = true;
-        renderer->last_cursor_visible = renderer->pending_cursor_visible;
         renderer->last_cols = renderer->pending_cols;
         renderer->last_rows = renderer->pending_rows;
     }
