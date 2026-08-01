@@ -18,10 +18,22 @@ if [[ -z "$zig" ]] || [[ "$("$zig" version)" != "$ZIG_VERSION" ]]; then
     exit 1
 fi
 
-ndk_path="${ANDROID_NDK_HOME:-$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION}"
+ndk_path="$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION"
 cmake_path="$ANDROID_SDK_ROOT/cmake/$ANDROID_CMAKE_VERSION"
+
+publish_ndk_environment() {
+    if [[ -n "${GITHUB_ENV:-}" ]]; then
+        {
+            printf 'ANDROID_NDK=%s\n' "$ndk_path"
+            printf 'ANDROID_NDK_HOME=%s\n' "$ndk_path"
+            printf 'ANDROID_NDK_ROOT=%s\n' "$ndk_path"
+        } >> "$GITHUB_ENV"
+    fi
+}
+
 if [[ -d "$ndk_path/toolchains/llvm/prebuilt" ]] &&
     [[ -x "$cmake_path/bin/cmake" ]]; then
+    publish_ndk_environment
     exit 0
 fi
 
@@ -40,5 +52,18 @@ if [[ -z "$sdkmanager" ]]; then
     exit 1
 fi
 
-yes | "$sdkmanager" --licenses >/dev/null || true
-"$sdkmanager" "ndk;$ANDROID_NDK_VERSION" "cmake;$ANDROID_CMAKE_VERSION"
+sdkmanager_java_home="${SDKMANAGER_JAVA_HOME:-${JAVA_HOME_17_X64:-${JAVA_HOME_17_ARM64:-${JAVA_HOME_17:-${JAVA_HOME:-}}}}}"
+
+run_sdkmanager() {
+    if [[ -n "$sdkmanager_java_home" ]]; then
+        JAVA_HOME="$sdkmanager_java_home" \
+            PATH="$sdkmanager_java_home/bin:$PATH" \
+            "$sdkmanager" "$@"
+    else
+        "$sdkmanager" "$@"
+    fi
+}
+
+yes 2>/dev/null | run_sdkmanager --licenses >/dev/null 2>&1 || true
+run_sdkmanager "ndk;$ANDROID_NDK_VERSION" "cmake;$ANDROID_CMAKE_VERSION"
+publish_ndk_environment
