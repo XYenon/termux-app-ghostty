@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - master
+      - ghostty
       - 'github-releases/**'
   pull_request:
     branches:
       - master
+      - ghostty
 
 jobs:
   build:
