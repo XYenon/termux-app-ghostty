@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+android_sdk_root="$HOME/.local/share/android-sdk"
+java_home="$HOME/.local/share/jdks/temurin-11"
+zig_home="$HOME/.local/share/zig/0.15.2"
+
+step() {
+    printf '\n==> %s\n' "$1"
+}
+
+step "Installing required system packages"
+packages=(ca-certificates curl git openjdk-17-jdk-headless unzip xz-utils)
+missing_packages=()
+for package in "${packages[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'ok installed'; then
+        missing_packages+=("$package")
+    fi
+done
+if ((${#missing_packages[@]})); then
+    sudo apt-get update
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        "${missing_packages[@]}"
+fi
+
+case "$(uname -m)" in
+    x86_64) java_arch="x64"; zig_arch="x86_64" ;;
+    aarch64) java_arch="aarch64"; zig_arch="aarch64" ;;
+    *) printf 'Unsupported architecture: %s\n' "$(uname -m)" >&2; exit 1 ;;
+esac
+
+mkdir -p "$HOME/.local/bin" "$(dirname "$java_home")" \
+    "$(dirname "$zig_home")" "$android_sdk_root"
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+step "Installing Java 11"
+if [[ ! -x "$java_home/bin/java" ]]; then
+    curl --fail --location --retry 3 \
+        "https://api.adoptium.net/v3/binary/latest/11/ga/linux/$java_arch/jdk/hotspot/normal/eclipse" \
+        --output "$tmp_dir/java.tar.gz"
+    mkdir -p "$java_home"
+    tar -xzf "$tmp_dir/java.tar.gz" --strip-components=1 -C "$java_home"
+fi
+
+step "Installing Zig 0.15.2"
+if [[ ! -x "$zig_home/zig" ]]; then
+    curl --fail --location --retry 3 \
+        "https://ziglang.org/download/0.15.2/zig-$zig_arch-linux-0.15.2.tar.xz" \
+        --output "$tmp_dir/zig.tar.xz"
+    mkdir -p "$zig_home"
+    tar -xJf "$tmp_dir/zig.tar.xz" --strip-components=1 -C "$zig_home"
+fi
+ln -sfn "$zig_home/zig" "$HOME/.local/bin/zig"
+
+step "Installing Android command-line tools"
+sdkmanager="$android_sdk_root/cmdline-tools/latest/bin/sdkmanager"
+if [[ ! -x "$sdkmanager" ]]; then
+    curl --fail --location --retry 3 \
+        "https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip" \
+        --output "$tmp_dir/android-command-line-tools.zip"
+    rm -rf "$android_sdk_root/cmdline-tools/latest"
+    mkdir -p "$android_sdk_root/cmdline-tools"
+    unzip -q "$tmp_dir/android-command-line-tools.zip" -d "$tmp_dir/android"
+    mv "$tmp_dir/android/cmdline-tools" "$android_sdk_root/cmdline-tools/latest"
+fi
+
+step "Installing Android SDK, NDK, and CMake"
+sdk_java_home="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
+if [[ "$("$sdk_java_home/bin/java" -version 2>&1)" != *'version "17.'* ]]; then
+    sdk_java_home="/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)"
+fi
+yes 2>/dev/null | JAVA_HOME="$sdk_java_home" PATH="$sdk_java_home/bin:$PATH" \
+    "$sdkmanager" --sdk_root="$android_sdk_root" --licenses >/dev/null || true
+JAVA_HOME="$sdk_java_home" PATH="$sdk_java_home/bin:$PATH" \
+    "$sdkmanager" --sdk_root="$android_sdk_root" \
+    "platform-tools" \
+    "platforms;android-30" \
+    "build-tools;30.0.3" \
+    "ndk;29.0.14206865" \
+    "cmake;3.22.1"
+
+step "Persisting the orb toolchain environment"
+profile_marker="# termux-app-ghostty orb toolchain"
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+    cat >> "$HOME/.bash_profile" <<EOF
+
+$profile_marker
+export JAVA_HOME="$java_home"
+export ANDROID_HOME="$android_sdk_root"
+export ANDROID_SDK_ROOT="$android_sdk_root"
+export ANDROID_NDK_HOME="$android_sdk_root/ndk/29.0.14206865"
+export ANDROID_NDK_ROOT="\$ANDROID_NDK_HOME"
+export PATH="\$JAVA_HOME/bin:\$ANDROID_SDK_ROOT/platform-tools:\$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$zig_home:\$HOME/.local/bin:\$PATH"
+EOF
+fi
+
+export JAVA_HOME="$java_home"
+export ANDROID_HOME="$android_sdk_root"
+export ANDROID_SDK_ROOT="$android_sdk_root"
+export ANDROID_NDK_HOME="$android_sdk_root/ndk/29.0.14206865"
+export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
+export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$zig_home:$HOME/.local/bin:$PATH"
+
+step "Warming Gradle and verifying project configuration"
+cd "$repo_root"
+./gradlew --no-daemon help
+
+step "Orb setup complete"

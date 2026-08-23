@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# This repository has no wake-time services or authentication to restore.
+printf 'Orb environment ready.\n'
