@@ -480,23 +480,59 @@ GhosttyClipboardWriteResult clipboard_write(
     return static_cast<GhosttyClipboardWriteResult>(result);
 }
 
-bool clipboard_read(GhosttyTerminal, void *userdata,
-                    GhosttyClipboardLocation location,
-                    GhosttyBuffer *out_data) {
+void clipboard_read(GhosttyTerminal, void *userdata,
+                    const GhosttyClipboardRead *read) {
     auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
-    if (!out_data) return false;
+    if (!read || !read->reply) return;
+
+    GhosttyClipboardReadReply reply{};
+    reply.size = sizeof(reply);
+    reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_DENIED;
+
+    const GhosttyString *requested_mime = nullptr;
+    for (size_t i = 0; i < read->mimes_len; ++i) {
+        if (is_plain_text_mime(read->mimes[i])) {
+            requested_mime = &read->mimes[i];
+            break;
+        }
+    }
+    if (!requested_mime && !read->list) {
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS;
+        read->reply(read, &reply);
+        return;
+    }
+
+    static constexpr uint8_t mime_data[] = "text/plain";
+    const GhosttyString mime{mime_data, sizeof(mime_data) - 1};
+    if (!requested_mime) {
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS;
+        reply.available = &mime;
+        reply.available_len = 1;
+        read->reply(read, &reply);
+        return;
+    }
+    if (!read->granted) {
+        read->reply(read, &reply);
+        return;
+    }
 
     bool attached;
     JNIEnv *env = get_env(engine, &attached);
-    if (!env) return false;
+    if (!env) {
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
+        read->reply(read, &reply);
+        return;
+    }
     auto data = static_cast<jbyteArray>(env->CallObjectMethod(
         engine->output, engine->clipboard_read_method,
-        static_cast<jint>(location)));
+        static_cast<jint>(read->location)));
     if (env->ExceptionCheck() || !data) {
         clear_java_exception(env, "clipboard read callback");
         if (data) env->DeleteLocalRef(data);
         release_env(engine, attached);
-        return false;
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_DENIED;
+        read->reply(read, &reply);
+        return;
     }
 
     const jsize length = env->GetArrayLength(data);
@@ -505,7 +541,9 @@ bool clipboard_read(GhosttyTerminal, void *userdata,
     } catch (const std::bad_alloc &) {
         env->DeleteLocalRef(data);
         release_env(engine, attached);
-        return false;
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
+        read->reply(read, &reply);
+        return;
     }
     if (length > 0) {
         env->GetByteArrayRegion(
@@ -515,15 +553,27 @@ bool clipboard_read(GhosttyTerminal, void *userdata,
     bool failed = env->ExceptionCheck();
     clear_java_exception(env, "clipboard read copy");
     env->DeleteLocalRef(data);
+    if (!failed) {
+        GhosttyClipboardContent content{};
+        content.mime = *requested_mime;
+        content.data = {
+            engine->clipboard_read_buffer.empty()
+                ? nullptr
+                : engine->clipboard_read_buffer.data(),
+            engine->clipboard_read_buffer.size()};
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS;
+        reply.contents = &content;
+        reply.contents_len = 1;
+        if (read->list) {
+            reply.available = &mime;
+            reply.available_len = 1;
+        }
+        read->reply(read, &reply);
+    } else {
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
+        read->reply(read, &reply);
+    }
     release_env(engine, attached);
-    if (failed) return false;
-
-    out_data->ptr = engine->clipboard_read_buffer.empty()
-        ? nullptr
-        : engine->clipboard_read_buffer.data();
-    out_data->cap = engine->clipboard_read_buffer.size();
-    out_data->len = engine->clipboard_read_buffer.size();
-    return true;
 }
 
 void colors_changed(TermuxGhosttyEngine *engine) {
@@ -820,12 +870,9 @@ Java_com_termux_terminal_GhosttyTerminal_nativeCreate(
         return 0;
     }
 
-    GhosttyTerminalOptions options{};
-    options.cols = static_cast<uint16_t>(columns);
-    options.rows = static_cast<uint16_t>(rows);
-    options.max_scrollback =
-        static_cast<size_t>(std::max(0, transcript_rows));
-    if (ghostty_terminal_new(nullptr, &engine->terminal, options) !=
+    if (ghostty_terminal_new(nullptr, &engine->terminal,
+                             static_cast<uint16_t>(columns),
+                             static_cast<uint16_t>(rows)) !=
             GHOSTTY_SUCCESS ||
         ghostty_key_encoder_new(nullptr, &engine->key_encoder) !=
             GHOSTTY_SUCCESS ||
@@ -842,6 +889,29 @@ Java_com_termux_terminal_GhosttyTerminal_nativeCreate(
             GHOSTTY_SUCCESS) {
         destroy_engine(env, engine);
         throw_illegal_state(env, "Could not initialize libghostty state");
+        return 0;
+    }
+
+    size_t max_scrollback =
+        static_cast<size_t>(std::max(0, transcript_rows));
+    if (ghostty_terminal_set(
+            engine->terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
+            &max_scrollback) != GHOSTTY_SUCCESS) {
+        destroy_engine(env, engine);
+        throw_illegal_state(env, "Could not configure terminal scrollback");
+        return 0;
+    }
+
+    static constexpr uint8_t terminfo_name_data[] = "xterm-ghostty";
+    const GhosttyString terminfo_name{
+        terminfo_name_data,
+        sizeof(terminfo_name_data) - 1,
+    };
+    if (ghostty_terminal_set(engine->terminal,
+                             GHOSTTY_TERMINAL_OPT_TERMINFO_NAME,
+                             &terminfo_name) != GHOSTTY_SUCCESS) {
+        destroy_engine(env, engine);
+        throw_illegal_state(env, "Could not configure terminal name");
         return 0;
     }
 
@@ -1289,27 +1359,44 @@ Java_com_termux_terminal_GhosttyTerminal_nativePaste(
     JNIEnv *env, jclass, jlong handle, jstring text) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
     const char *utf8 = env->GetStringUTFChars(text, nullptr);
+    if (!utf8) return;
     size_t length = strlen(utf8);
-    std::vector<char> input(utf8, utf8 + length);
+    std::vector<uint8_t> input(utf8, utf8 + length);
     env->ReleaseStringUTFChars(text, utf8);
-    bool bracketed = false;
-    std::vector<char> output(length + 16);
-    size_t written = 0;
+
+    static constexpr uint8_t mime_data[] = "text/plain";
+    const GhosttyClipboardContent content{
+        {mime_data, sizeof(mime_data) - 1},
+        {input.data(), input.size()},
+    };
+    GhosttyPaste paste{};
+    paste.size = sizeof(paste);
+    paste.location = GHOSTTY_CLIPBOARD_LOCATION_STANDARD;
+    paste.source = GHOSTTY_PASTE_SOURCE_CLIPBOARD;
+    paste.contents = &content;
+    paste.contents_len = 1;
+    // Preserve Termux's existing paste behavior. Ghostty still strips unsafe
+    // control bytes and applies the current bracketed-paste mode.
+    paste.allow_unsafe = true;
+
+    std::vector<uint8_t> pty_writes;
+    bool written = false;
     termux_ghostty_engine_lock(engine);
-    ghostty_terminal_mode_get(engine->terminal, GHOSTTY_MODE_BRACKETED_PASTE,
-                              &bracketed);
-    GhosttyResult result = ghostty_paste_encode(
-        input.data(), input.size(), bracketed, output.data(), output.size(),
-        &written);
-    if (result == GHOSTTY_OUT_OF_SPACE) {
-        output.resize(written);
-        result = ghostty_paste_encode(input.data(), input.size(), bracketed,
-                                      output.data(), output.size(), &written);
-    }
+    engine->callback_allocation_failed = false;
+    engine->pending_pty_writes = &pty_writes;
+    GhosttyResult result = ghostty_terminal_paste(engine->terminal, &paste,
+                                                  &written);
+    engine->pending_pty_writes = nullptr;
+    bool allocation_failed = engine->callback_allocation_failed;
     termux_ghostty_engine_unlock(engine);
-    if (result == GHOSTTY_SUCCESS) {
-        termux_ghostty_engine_write(
-            engine, reinterpret_cast<const uint8_t *>(output.data()), written);
+
+    if (allocation_failed) {
+        throw_illegal_state(env, "Out of memory handling terminal paste");
+    } else if (result != GHOSTTY_SUCCESS) {
+        throw_illegal_state(env, "Could not paste terminal data");
+    } else if (written && !pty_writes.empty()) {
+        termux_ghostty_engine_write(engine, pty_writes.data(),
+                                    pty_writes.size());
     }
 }
 
@@ -1397,8 +1484,11 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSendFocus(
     char output[8];
     size_t written = 0;
     termux_ghostty_engine_lock(engine);
-    ghostty_terminal_mode_get(engine->terminal, GHOSTTY_MODE_FOCUS_EVENT,
-                              &enabled);
+    GhosttyTerminalModeConfig mode{GHOSTTY_MODE_FOCUS_EVENT, false};
+    if (ghostty_terminal_get(engine->terminal, GHOSTTY_TERMINAL_DATA_MODE,
+                            &mode) == GHOSTTY_SUCCESS) {
+        enabled = mode.value;
+    }
     termux_ghostty_engine_unlock(engine);
     if (enabled &&
         ghostty_focus_encode(

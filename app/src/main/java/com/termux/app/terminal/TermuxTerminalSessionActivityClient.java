@@ -378,20 +378,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         try {
             ClipData clip = clipboard.getPrimaryClip();
             if (clip == null || clip.getItemCount() == 0) return new byte[0];
-            ClipDescription description = clip.getDescription();
             ContentResolver resolver = mActivity.getContentResolver();
-            for (int i = 0; i < clip.getItemCount(); i++) {
-                ClipData.Item item = clip.getItemAt(i);
-                Uri uri = item.getUri();
-                if (uri == null || !isImageClipboardUri(resolver, description, uri))
-                    continue;
-                try (InputStream input =
-                         resolver.openInputStream(uri)) {
-                    if (input == null) return null;
-                    return readClipboardBytes(input);
-                }
-            }
-
             ClipData.Item item = clip.getItemAt(0);
             CharSequence text = item.getText();
             if (text != null) return encodeClipboardText(text);
@@ -417,7 +404,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
                 ? new byte[0]
                 : encodeClipboardText(intent.toUri(Intent.URI_INTENT_SCHEME));
         } catch (IOException e) {
-            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read OSC clipboard image", e);
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read OSC clipboard", e);
             return null;
         } catch (SecurityException e) {
             return null;
@@ -425,15 +412,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read OSC clipboard", e);
             return null;
         }
-    }
-
-    private static boolean isImageClipboardUri(ContentResolver resolver,
-                                               ClipDescription description,
-                                               Uri uri) {
-        String mimeType = resolver.getType(uri);
-        if (mimeType != null)
-            return ClipDescription.compareMimeTypes(mimeType, "image/*");
-        return description != null && description.hasMimeType("image/*");
     }
 
     static byte[] readClipboardBytes(InputStream input) throws IOException {

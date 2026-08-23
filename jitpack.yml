@@ -3,6 +3,6 @@ jdk:
 env:
   JITPACK_NDK_VERSION: "29.0.14206865"
 before_install:
-  - pip3 install --user ziglang==0.15.2
+  - pip3 install --user ziglang==0.16.0
   - sudo ln -sf "$(python3 -c 'import os, ziglang; print(os.path.join(os.path.dirname(ziglang.__file__), "zig"))')" /usr/local/bin/zig
-  - CI=true ZIG_VERSION=0.15.2 ANDROID_NDK_VERSION=29.0.14206865 ANDROID_CMAKE_VERSION=3.22.1 .github/scripts/setup-build-tools.sh
+  - CI=true ZIG_VERSION=0.16.0 ANDROID_NDK_VERSION=29.0.14206865 ANDROID_CMAKE_VERSION=3.22.1 .github/scripts/setup-build-tools.sh

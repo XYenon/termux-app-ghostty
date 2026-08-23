@@ -16,7 +16,7 @@ jobs:
   testing:
     runs-on: ubuntu-latest
     env:
-      ZIG_VERSION: 0.15.2
+      ZIG_VERSION: 0.16.0
       ANDROID_NDK_VERSION: 29.0.14206865
       ANDROID_CMAKE_VERSION: 3.22.1
     steps:
@@ -30,7 +30,7 @@ jobs:
     - name: Setup Zig
       uses: mlugg/setup-zig@v2
       with:
-        version: 0.15.2
+        version: 0.16.0
     - name: Setup native build tools
       run: .github/scripts/setup-build-tools.sh
     - name: Execute tests

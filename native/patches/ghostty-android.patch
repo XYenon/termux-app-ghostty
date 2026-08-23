@@ -1,8 +1,8 @@
 diff --git a/include/ghostty/vt.h b/include/ghostty/vt.h
-index 5606f1690e372daa17ae6705d197b23b4a87cef3..3867374637c739dbba5cc62494c40f93261e2d7d 100644
+index 57f0a0e65a1891e61a02037d98919fe8d864c37a..e1a8b9d28831af4e37f87b25adfc52b55bfddf6d 100644
 --- a/include/ghostty/vt.h
 +++ b/include/ghostty/vt.h
-@@ -136,6 +136,7 @@ extern "C" {
+@@ -140,6 +140,7 @@ extern "C" {
  #include <ghostty/vt/device.h>
  #include <ghostty/vt/focus.h>
  #include <ghostty/vt/formatter.h>
@@ -104,10 +104,10 @@ index 0000000000000000000000000000000000000000..02f26c6a3bd83b3671434bfba5dbcb8c
 +
 +#endif /* GHOSTTY_VT_GLYPH_H */
 diff --git a/include/ghostty/vt/kitty_graphics.h b/include/ghostty/vt/kitty_graphics.h
-index dda8b836e1e7b87ff95038e970f1b57be2d9808a..a39febb6a0827eb64527c658a566728e95287186 100644
+index 99cee60ac92c713769d3c057d9ca8565f14e2f12..f2a92027dd57ed60ed843db4aab07cc9d0110d1e 100644
 --- a/include/ghostty/vt/kitty_graphics.h
 +++ b/include/ghostty/vt/kitty_graphics.h
-@@ -474,6 +474,41 @@ typedef struct {
+@@ -486,6 +486,41 @@ typedef struct {
    uint32_t source_height;
  } GhosttyKittyGraphicsPlacementRenderInfo;
  
@@ -149,7 +149,7 @@ index dda8b836e1e7b87ff95038e970f1b57be2d9808a..a39febb6a0827eb64527c658a566728e
  /**
   * Get data from a kitty graphics storage instance.
   *
-@@ -850,6 +885,28 @@ GHOSTTY_API GhosttyResult ghostty_kitty_graphics_placement_render_info(
+@@ -862,6 +897,28 @@ GHOSTTY_API GhosttyResult ghostty_kitty_graphics_placement_render_info(
      GhosttyTerminal terminal,
      GhosttyKittyGraphicsPlacementRenderInfo* out_info);
  
@@ -179,24 +179,13 @@ index dda8b836e1e7b87ff95038e970f1b57be2d9808a..a39febb6a0827eb64527c658a566728e
  
  #ifdef __cplusplus
 diff --git a/include/ghostty/vt/terminal.h b/include/ghostty/vt/terminal.h
-index 9ae4e6c45fca4fda8da376ccafa28c3ae16d403f..34bc0190dee28b39bce42fa82abd2a889e09f5de 100644
+index 4f8999a0379235715417425c7e70d81e4a0b04b3..3df0e82ffb6aa709d398d19c4e72a6055f02a857 100644
 --- a/include/ghostty/vt/terminal.h
 +++ b/include/ghostty/vt/terminal.h
-@@ -93,7 +93,10 @@ extern "C" {
-  * | `GHOSTTY_TERMINAL_OPT_SIZE`             | `GhosttyTerminalSizeFn`           | XTWINOPS size query (CSI 14/16/18 t)      |
-  * | `GHOSTTY_TERMINAL_OPT_COLOR_SCHEME`     | `GhosttyTerminalColorSchemeFn`    | Color scheme query (CSI ? 996 n)          |
-  * | `GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES`| `GhosttyTerminalDeviceAttributesFn`| Device attributes query (CSI c / > c / = c)|
-+ * | `GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ`   | `GhosttyTerminalClipboardReadFn`  | Clipboard read via OSC 52                  |
-  * | `GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE`  | `GhosttyTerminalClipboardWriteFn` | Clipboard write via OSC 52 / OSC 1337     |
-+ * | `GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION`| `GhosttyTerminalDesktopNotificationFn` | Desktop notification via OSC 9 / OSC 777 |
-+ * | `GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT`  | `GhosttyTerminalProgressReportFn` | Progress report via OSC 9;4               |
-  *
-  * ### Defining a write_pty callback
-  * @snippet c-vt-effects/src/main.c effects-write-pty
-@@ -368,6 +371,45 @@ typedef enum GHOSTTY_ENUM_TYPED {
+@@ -442,6 +442,45 @@ typedef enum GHOSTTY_ENUM_TYPED {
    GHOSTTY_CLIPBOARD_LOCATION_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
  } GhosttyClipboardLocation;
-
+ 
 +/** Mouse pointer shapes accepted by OSC 22. */
 +typedef enum GHOSTTY_ENUM_TYPED {
 +  GHOSTTY_TERMINAL_MOUSE_SHAPE_DEFAULT = 0,
@@ -239,233 +228,64 @@ index 9ae4e6c45fca4fda8da376ccafa28c3ae16d403f..34bc0190dee28b39bce42fa82abd2a88
  /**
   * One MIME representation in a clipboard write.
   *
-@@ -467,6 +509,66 @@ typedef GhosttyClipboardWriteResult (*GhosttyTerminalClipboardWriteFn)(
-     void* userdata,
-     const GhosttyClipboardWrite* write);
- 
-+/** A request to show a desktop notification. */
-+typedef struct {
-+  size_t size;
-+  GhosttyString title;
-+  GhosttyString body;
-+} GhosttyTerminalDesktopNotification;
-+
-+/** Callback invoked for OSC 9 and OSC 777 desktop notifications. */
-+typedef void (*GhosttyTerminalDesktopNotificationFn)(
-+    GhosttyTerminal terminal,
-+    void* userdata,
-+    const GhosttyTerminalDesktopNotification* notification);
-+
-+/** State of a terminal progress report. */
-+typedef enum GHOSTTY_ENUM_TYPED {
-+  GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE = 0,
-+  GHOSTTY_TERMINAL_PROGRESS_STATE_SET = 1,
-+  GHOSTTY_TERMINAL_PROGRESS_STATE_ERROR = 2,
-+  GHOSTTY_TERMINAL_PROGRESS_STATE_INDETERMINATE = 3,
-+  GHOSTTY_TERMINAL_PROGRESS_STATE_PAUSE = 4,
-+  GHOSTTY_TERMINAL_PROGRESS_STATE_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
-+} GhosttyTerminalProgressState;
-+
-+/** A progress report emitted by the running program. */
-+typedef struct {
-+  size_t size;
-+  GhosttyTerminalProgressState state;
-+  /** Percentage from 0 through 100, or -1 when omitted. */
-+  int8_t progress;
-+} GhosttyTerminalProgressReport;
-+
-+/** Callback invoked for OSC 9;4 progress reports. */
-+typedef void (*GhosttyTerminalProgressReportFn)(
-+    GhosttyTerminal terminal,
-+    void* userdata,
-+    const GhosttyTerminalProgressReport* report);
-+
-+/**
-+ * Callback function type for clipboard_read.
-+ *
-+ * Called synchronously for an OSC 52 clipboard read request. On success,
-+ * populate `out_data` with borrowed bytes that remain valid until the current
-+ * `ghostty_terminal_vt_write` call returns. The terminal Base64-encodes the
-+ * bytes and writes the complete OSC 52 response through
-+ * `GhosttyTerminalWritePtyFn`. Return false to leave the request unanswered.
-+ *
-+ * @param terminal The terminal handle
-+ * @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
-+ * @param location Clipboard destination requested by the OSC 52 selector
-+ * @param[out] out_data Borrowed clipboard bytes
-+ * @return true if clipboard bytes were returned, false to ignore the query
-+ *
-+ * @ingroup terminal
-+ */
-+typedef bool (*GhosttyTerminalClipboardReadFn)(
-+    GhosttyTerminal terminal,
-+    void* userdata,
-+    GhosttyClipboardLocation location,
-+    GhosttyBuffer* out_data);
-+
- /**
-  * Callback function type for color scheme queries (CSI ? 996 n).
-  *
-@@ -881,12 +983,24 @@ typedef enum GHOSTTY_ENUM_TYPED {
-    * Callback invoked when the running program performs a clipboard write.
-    * OSC 52 and iTerm2 OSC 1337 Copy writes are normalized to an atomic set
-    * of decoded MIME representations. Set to NULL to ignore clipboard writes.
--   * Clipboard read requests are always ignored; see
--   * GhosttyTerminalClipboardWriteFn.
-    *
-    * Input type: GhosttyTerminalClipboardWriteFn
-    */
-   GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE = 26,
-+
-+  /**
-+   * Callback invoked when the running program requests clipboard contents
-+   * with OSC 52. Set to NULL to leave clipboard read requests unanswered.
-+   *
-+   * Input type: GhosttyTerminalClipboardReadFn
-+   */
-+  GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ = 27,
-+
-+  /** Callback invoked for OSC 9 and OSC 777 desktop notifications. */
-+  GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION = 28,
-+
-+  /** Callback invoked for OSC 9;4 progress reports. */
-+  GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT = 29,
-   GHOSTTY_TERMINAL_OPT_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
- } GhosttyTerminalOption;
- 
-@@ -1213,6 +1327,9 @@ typedef enum GHOSTTY_ENUM_TYPED {
+@@ -1842,6 +1881,9 @@ typedef enum GHOSTTY_ENUM_TYPED {
     * Output type: bool *
     */
-   GHOSTTY_TERMINAL_DATA_VT_PROCESSING_ERROR = 33,
+   GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT = 39,
 +
 +  /** The current OSC 22 mouse pointer shape. Output: GhosttyTerminalMouseShape*. */
-+  GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE = 34,
++  GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE = 40,
    GHOSTTY_TERMINAL_DATA_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
  } GhosttyTerminalData;
-
-diff --git a/pkg/afl++/afl.c b/pkg/afl++/afl.c
-index 61eb12c4aa79f61f9717d0fd179bbe4f747b20d8..ad27b33ac9d2e29ec6aa617bec3532551a09e249 100644
---- a/pkg/afl++/afl.c
-+++ b/pkg/afl++/afl.c
-@@ -25,26 +25,6 @@
- void zig_fuzz_init();
- void zig_fuzz_test(unsigned char*, size_t);
- 
--// Linker-provided symbols marking the boundaries of the __sancov_guards
--// section. These must be declared extern so the linker provides the actual
--// section boundaries from the instrumented code, rather than creating new
--// variables that shadow them. On macOS (Mach-O), the linker uses a different
--// naming convention for section boundaries than Linux (ELF), so we use asm
--// labels to reference them.
--#ifdef __APPLE__
--extern uint32_t __start___sancov_guards __asm(
--    "section$start$__DATA$__sancov_guards");
--extern uint32_t __stop___sancov_guards __asm(
--    "section$end$__DATA$__sancov_guards");
--#else
--extern uint32_t __start___sancov_guards;
--extern uint32_t __stop___sancov_guards;
--#endif
--
--// Provided by afl-compiler-rt; initializes the guard array used by
--// SanitizerCoverage's trace-pc-guard instrumentation mode.
--void __sanitizer_cov_trace_pc_guard_init(uint32_t*, uint32_t*);
--
- // Stubs for sanitizer coverage callbacks that the Zig-compiled code references
- // but AFL's runtime (afl-compiler-rt) does not provide. Without these, linking
- // would fail with undefined symbol errors.
-@@ -68,11 +48,6 @@ unsigned char __afl_fuzz_alt[1048576];
- unsigned char* __afl_fuzz_alt_ptr = __afl_fuzz_alt;
- 
- int main(int argc, char** argv) {
--  // Tell AFL's coverage runtime about our guard section so it can track
--  // which edges in the instrumented Zig code have been hit.
--  __sanitizer_cov_trace_pc_guard_init(&__start___sancov_guards,
--                                      &__stop___sancov_guards);
--
-   // Manual expansion of __AFL_INIT() — deferred fork server mode.
-   //
-   // The magic string "##SIG_AFL_DEFER_FORKSRV##" is embedded in the binary
-diff --git a/pkg/afl++/build.zig b/pkg/afl++/build.zig
-index 9f6f70e9677f5c87fa9cf9e292b51bae733e17f5..1a437a740f4a7b16d4d77f829a92ae4b1ae6f43a 100644
---- a/pkg/afl++/build.zig
-+++ b/pkg/afl++/build.zig
-@@ -8,6 +8,7 @@ const builtin = @import("builtin");
- pub fn addInstrumentedExe(
-     b: *std.Build,
-     obj: *std.Build.Step.Compile,
-+    link_objects: []const std.Build.LazyPath,
- ) std.Build.LazyPath {
-     // Force the build system to produce the binary artifact even though we
-     // only consume the LLVM bitcode below. Without this, the dependency
-@@ -34,6 +35,11 @@ pub fn addInstrumentedExe(
-     const fuzz_exe = afl_cc.addOutputFileArg(obj.name);
-     afl_cc.addFileArg(pkg.path("afl.c"));
-     afl_cc.addFileArg(obj.getEmittedLlvmBc());
-+    // The LLVM bitcode only contains the Zig compilation unit. Link the
-+    // archive as well so native objects such as the SIMD C++ implementation
-+    // can satisfy its unresolved symbols.
-+    afl_cc.addFileArg(obj.getEmittedBin());
-+    for (link_objects) |path| afl_cc.addFileArg(path);
-     return fuzz_exe;
- }
  
 diff --git a/src/lib_vt.zig b/src/lib_vt.zig
-index e01cdbb892c36cf88d4088c45bb464a429654d57..9c826da1eeb96e9f54abf1c5223c71f45693476c 100644
+index 325f0e138676a29e20757a5fa3784b3c299f3014..e58013422c517fe085bb49724cad2a86fa3ce519 100644
 --- a/src/lib_vt.zig
 +++ b/src/lib_vt.zig
-@@ -38,6 +38,7 @@ const terminal = @import("terminal/main.zig");
- pub const sys = terminal.sys;
- 
- pub const apc = terminal.apc;
-+pub const clipboard = terminal.clipboard;
- pub const dcs = terminal.dcs;
- pub const osc = terminal.osc;
- pub const point = terminal.point;
-@@ -231,6 +232,10 @@ comptime {
-         @export(&c.formatter_format_buf, .{ .name = "ghostty_formatter_format_buf" });
-         @export(&c.formatter_format_alloc, .{ .name = "ghostty_formatter_format_alloc" });
-         @export(&c.formatter_free, .{ .name = "ghostty_formatter_free" });
+@@ -289,6 +289,10 @@ comptime {
+             @export(&c.terminal_selection_format_buf, .{ .name = "ghostty_terminal_selection_format_buf" });
+             @export(&c.terminal_selection_format_alloc, .{ .name = "ghostty_terminal_selection_format_alloc" });
+         }
 +        @export(&c.glyph_generation, .{ .name = "ghostty_glyph_generation" });
 +        @export(&c.glyph_info, .{ .name = "ghostty_glyph_info" });
 +        @export(&c.glyph_contours, .{ .name = "ghostty_glyph_contours" });
 +        @export(&c.glyph_points, .{ .name = "ghostty_glyph_points" });
-         @export(&c.terminal_selection_format_buf, .{ .name = "ghostty_terminal_selection_format_buf" });
-         @export(&c.terminal_selection_format_alloc, .{ .name = "ghostty_terminal_selection_format_alloc" });
-         @export(&c.render_state_new, .{ .name = "ghostty_render_state_new" });
-@@ -305,6 +310,7 @@ comptime {
-         @export(&c.kitty_graphics_placement_viewport_pos, .{ .name = "ghostty_kitty_graphics_placement_viewport_pos" });
-         @export(&c.kitty_graphics_placement_source_rect, .{ .name = "ghostty_kitty_graphics_placement_source_rect" });
-         @export(&c.kitty_graphics_placement_render_info, .{ .name = "ghostty_kitty_graphics_placement_render_info" });
-+        @export(&c.kitty_graphics_virtual_placements, .{ .name = "ghostty_kitty_graphics_virtual_placements" });
-         @export(&c.grid_ref_cell, .{ .name = "ghostty_grid_ref_cell" });
-         @export(&c.grid_ref_row, .{ .name = "ghostty_grid_ref_row" });
-         @export(&c.grid_ref_graphemes, .{ .name = "ghostty_grid_ref_graphemes" });
+         if (features.render_state) {
+             @export(&c.render_state_new, .{ .name = "ghostty_render_state_new" });
+             @export(&c.render_state_update, .{ .name = "ghostty_render_state_update" });
+@@ -389,6 +393,7 @@ comptime {
+             @export(&c.kitty_graphics_placement_viewport_pos, .{ .name = "ghostty_kitty_graphics_placement_viewport_pos" });
+             @export(&c.kitty_graphics_placement_source_rect, .{ .name = "ghostty_kitty_graphics_placement_source_rect" });
+             @export(&c.kitty_graphics_placement_render_info, .{ .name = "ghostty_kitty_graphics_placement_render_info" });
++            @export(&c.kitty_graphics_virtual_placements, .{ .name = "ghostty_kitty_graphics_virtual_placements" });
+         }
+         if (features.grid_introspection) {
+             @export(&c.grid_ref_cell, .{ .name = "ghostty_grid_ref_cell" });
 diff --git a/src/terminal/Terminal.zig b/src/terminal/Terminal.zig
-index bc5c9834aecedfb5c6373a262624cf0362716d28..153b98ae2fafb2a3acfd6df77fc4f316ed98b8e3 100644
+index 561728f5fd8aef01a7b3b967f3bae345ec10228c..f2ba572da82eb2015146a05b96d304265b4dbd9a 100644
 --- a/src/terminal/Terminal.zig
 +++ b/src/terminal/Terminal.zig
-@@ -90,6 +90,9 @@ mouse_shape: mouse.Shape = .text,
+@@ -91,6 +91,9 @@ mouse_shape: mouse.Shape = .text,
  /// Per-session Glyph Protocol registrations.
  glyph_glossary: glyph.Glossary = .empty,
  
 +/// Monotonically increasing generation for renderer cache invalidation.
 +glyph_glossary_generation: u64 = 0,
 +
- /// These are just a packed set of flags we may set on the terminal.
- flags: packed struct {
-     // This supports a Kitty extension where programs using semantic
-@@ -498,6 +501,9 @@ fn printSliceFast(self: *Terminal, cps: []const u32) !usize {
-     // Only the main display is supported.
-     if (self.status_display != .main) return 0;
- 
+ /// Kitty drag and drop protocol (OSC 72) state. Allocated when a client
+ /// registers to accept drops (t=a) and freed when it unregisters (t=A),
+ /// so a terminal that never runs a drag and drop aware program pays
+@@ -614,6 +617,9 @@ fn printSliceFast(
+     grapheme_cluster: bool,
+     allow_unicode: bool,
+ ) !usize {
 +    // Glyph Protocol registrations can override Unicode cell widths.
 +    if (self.glyph_glossary.entries.count() > 0) return 0;
 +
-     // Modes that require per-codepoint handling in print(). Wraparound
-     // is required (its the default) so that our row-fill logic below can
-     // assume soft-wrap semantics. Insert mode shifts cells per print.
-@@ -1190,7 +1196,12 @@ pub fn print(self: *Terminal, c: u21) !void {
+     const screen: *Screen = self.screens.active;
+ 
+     // Codepoints in [0x10, 0xFF] are always narrow (width 1, matching
+@@ -1449,7 +1455,12 @@ pub fn print(self: *Terminal, c: u21) !void {
      // non-single-width characters properly. We have a fast-path for
      // byte-sized characters since they're so common. We can ignore
      // control characters because they're always filtered prior.
@@ -479,7 +299,7 @@ index bc5c9834aecedfb5c6373a262624cf0362716d28..153b98ae2fafb2a3acfd6df77fc4f316
  
      // Note: it is possible to have a width of "3" and a width of "-1" from
      // uucode.x's wcwidth. We should look into those cases and handle them
-@@ -3378,7 +3389,13 @@ pub fn glyphProtocol(
+@@ -3783,7 +3794,13 @@ pub fn glyphProtocol(
  ) ?glyph.Response {
      const resp = glyph.execute(alloc, &self.glyph_glossary, req);
      switch (req.*) {
@@ -494,7 +314,7 @@ index bc5c9834aecedfb5c6373a262624cf0362716d28..153b98ae2fafb2a3acfd6df77fc4f316
          .support, .query => {},
      }
      return resp;
-@@ -4332,6 +4349,10 @@ pub fn fullReset(self: *Terminal) void {
+@@ -4914,6 +4931,10 @@ pub fn fullReset(self: *Terminal) void {
      self.pwd.clearRetainingCapacity();
      self.title.clearRetainingCapacity();
      self.glyph_glossary.clearAndFree(self.gpa());
@@ -502,9 +322,9 @@ index bc5c9834aecedfb5c6373a262624cf0362716d28..153b98ae2fafb2a3acfd6df77fc4f316
 +    if (self.glyph_glossary_generation == 0) {
 +        self.glyph_glossary_generation = 1;
 +    }
-     self.status_display = .main;
-     self.scrolling_region = .{
-         .top = 0,
+     // A reset only interrupts an in-progress chunked OSC 72 command;
+     // drag and drop registration survives, matching kitty.
+     if (self.kitty_dnd) |dnd| dnd.chunking = .{};
 diff --git a/src/terminal/c/glyph.zig b/src/terminal/c/glyph.zig
 new file mode 100644
 index 0000000000000000000000000000000000000000..0cc4e2b38155ec00fa053cf8103212271bb6aac5
@@ -647,7 +467,7 @@ index 0000000000000000000000000000000000000000..0cc4e2b38155ec00fa053cf810321227
 +    return .success;
 +}
 diff --git a/src/terminal/c/kitty_graphics.zig b/src/terminal/c/kitty_graphics.zig
-index 13a675ccc46ff0daf2acd6017cae9c53d25f2b49..d8c6cf4e41fbd2f81823ee0ffe266d5a40734127 100644
+index 2bd5e8620dc4be1a84d82202c9725aefbe5b635f..3112cd1336096c5d46e70ba6af1be9fa449f6556 100644
 --- a/src/terminal/c/kitty_graphics.zig
 +++ b/src/terminal/c/kitty_graphics.zig
 @@ -5,6 +5,7 @@ const lib = @import("../lib.zig");
@@ -682,7 +502,7 @@ index 13a675ccc46ff0daf2acd6017cae9c53d25f2b49..d8c6cf4e41fbd2f81823ee0ffe266d5a
  pub fn placement_render_info(
      iter_: PlacementIterator,
      image_: ImageHandle,
-@@ -586,6 +604,69 @@ pub fn placement_render_info(
+@@ -585,6 +603,69 @@ pub fn placement_render_info(
      return .success;
  }
  
@@ -753,7 +573,7 @@ index 13a675ccc46ff0daf2acd6017cae9c53d25f2b49..d8c6cf4e41fbd2f81823ee0ffe266d5a
  ///
  /// Converts the placement's internal pin to viewport-relative column
 diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
-index 37dc57684aa5e6edea164acb3d4faa37955667b3..9fb85ea0b0ca6abd8b2a2d236d79023cf46bb0e6 100644
+index 562fe40e614e6514bd3f0c4e4049571172270632..d4288934040dc1bc9c23f763c650569b084f262a 100644
 --- a/src/terminal/c/main.zig
 +++ b/src/terminal/c/main.zig
 @@ -8,6 +8,7 @@ pub const color = @import("color.zig");
@@ -763,8 +583,8 @@ index 37dc57684aa5e6edea164acb3d4faa37955667b3..9fb85ea0b0ca6abd8b2a2d236d79023c
 +pub const glyph = @import("glyph.zig");
  pub const grid_ref = @import("grid_ref.zig");
  pub const grid_ref_tracked = @import("grid_ref_tracked.zig");
- pub const kitty_graphics = @import("kitty_graphics.zig");
-@@ -27,6 +28,7 @@ pub const kitty_graphics_placement_grid_size = kitty_graphics.placement_grid_siz
+ pub const io = @import("io.zig");
+@@ -28,6 +29,7 @@ pub const kitty_graphics_placement_grid_size = kitty_graphics.placement_grid_siz
  pub const kitty_graphics_placement_viewport_pos = kitty_graphics.placement_viewport_pos;
  pub const kitty_graphics_placement_source_rect = kitty_graphics.placement_source_rect;
  pub const kitty_graphics_placement_render_info = kitty_graphics.placement_render_info;
@@ -772,7 +592,7 @@ index 37dc57684aa5e6edea164acb3d4faa37955667b3..9fb85ea0b0ca6abd8b2a2d236d79023c
  pub const types = @import("types.zig");
  pub const modes = @import("modes.zig");
  pub const osc = @import("osc.zig");
-@@ -80,6 +82,11 @@ pub const formatter_format_buf = formatter.format_buf;
+@@ -83,6 +85,11 @@ pub const formatter_format_buf = formatter.format_buf;
  pub const formatter_format_alloc = formatter.format_alloc;
  pub const formatter_free = formatter.free;
  
@@ -784,7 +604,7 @@ index 37dc57684aa5e6edea164acb3d4faa37955667b3..9fb85ea0b0ca6abd8b2a2d236d79023c
  pub const render_state_new = render.new;
  pub const render_state_free = render.free;
  pub const render_state_update = render.update;
-@@ -242,6 +249,7 @@ test {
+@@ -261,6 +268,7 @@ test {
      _ = row;
      _ = focus;
      _ = formatter;
@@ -793,1273 +613,38 @@ index 37dc57684aa5e6edea164acb3d4faa37955667b3..9fb85ea0b0ca6abd8b2a2d236d79023c
      _ = osc;
      _ = render;
 diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
-index cafef912f70a1c712b4cdd5f0a8bb8d00ba11fba..e8a7a4fb0b5fb1e71fa10ab7b2bc2f564a1648e5 100644
+index 6c35d6e06d52c2247a11f235395a4e83ade15c36..563b2dad95949d824f2565bbd6e4dd75485bdbd1 100644
 --- a/src/terminal/c/terminal.zig
 +++ b/src/terminal/c/terminal.zig
-@@ -25,9 +25,12 @@ const selection_c = @import("selection.zig");
+@@ -28,6 +28,7 @@ const selection_c = @import("selection.zig");
  const style_c = @import("style.zig");
  const color = @import("../color.zig");
  const clipboard = @import("../clipboard.zig");
 +const mouse = @import("../mouse.zig");
-+const osc = @import("../osc.zig");
+ const c_io = @import("io.zig");
+ const snapshot_core = @import("../snapshot/main.zig");
  const Result = @import("result.zig").Result;
-
- const Handler = @import("../stream_terminal.zig").Handler;
-+const Action = @import("../stream.zig").Action;
-
- const log = std.log.scoped(.terminal_c);
-
-@@ -59,6 +62,27 @@ pub const ClipboardWrite = extern struct {
-     contents_len: usize,
- };
-
-+/// A request to show a desktop notification.
-+///
-+/// C: GhosttyTerminalDesktopNotification
-+pub const DesktopNotification = extern struct {
-+    size: usize,
-+    title: lib.String,
-+    body: lib.String,
-+};
-+
-+/// C: GhosttyTerminalProgressState
-+pub const ProgressState = osc.Command.ProgressReport.State;
-+
-+/// A progress report emitted by the running program.
-+///
-+/// C: GhosttyTerminalProgressReport
-+pub const ProgressReport = extern struct {
-+    size: usize,
-+    state: ProgressState,
-+    progress: i8,
-+};
-+
- /// C callback state for terminal effects. Trampolines are always
- /// installed on the stream handler; they check these fields and
- /// no-op when the corresponding callback is null.
-@@ -67,12 +91,15 @@ const Effects = struct {
-     write_pty: ?WritePtyFn = null,
-     bell: ?BellFn = null,
-     color_scheme: ?ColorSchemeFn = null,
-+    desktop_notification: ?DesktopNotificationFn = null,
-     device_attributes_cb: ?DeviceAttributesFn = null,
-     enquiry: ?EnquiryFn = null,
-     xtversion: ?XtversionFn = null,
-     title_changed: ?TitleChangedFn = null,
-     pwd_changed: ?PwdChangedFn = null,
-+    progress_report: ?ProgressReportFn = null,
-     size_cb: ?SizeFn = null,
-+    clipboard_read: ?ClipboardReadFn = null,
-     clipboard_write: ?ClipboardWriteFn = null,
+@@ -1534,6 +1535,7 @@ pub const TerminalData = enum(c_int) {
+     mode = 37,
+     vt_ground = 38,
+     cursor_at_prompt = 39,
++    mouse_shape = 40,
  
-     /// Scratch buffer for DA1 feature codes. The device attributes
-@@ -108,12 +135,23 @@ const Effects = struct {
-     /// and its contents are borrowed and only valid for the callback duration.
-     pub const ClipboardWriteFn = *const fn (Terminal, ?*anyopaque, *const ClipboardWrite) callconv(lib.calling_conv) clipboard.WriteResult;
- 
-+    /// C function pointer type for the clipboard_read callback. On success,
-+    /// out_data points to borrowed bytes valid for the current VT write call.
-+    pub const ClipboardReadFn = *const fn (Terminal, ?*anyopaque, clipboard.Location, *lib.Buffer) callconv(lib.calling_conv) bool;
-+
-+    /// C function pointer type for the desktop_notification callback. The
-+    /// request and its strings are borrowed for the callback duration.
-+    pub const DesktopNotificationFn = *const fn (Terminal, ?*anyopaque, *const DesktopNotification) callconv(lib.calling_conv) void;
-+
-     /// C function pointer type for the title_changed callback.
-     pub const TitleChangedFn = *const fn (Terminal, ?*anyopaque) callconv(lib.calling_conv) void;
- 
-     /// C function pointer type for the pwd_changed callback.
-     pub const PwdChangedFn = *const fn (Terminal, ?*anyopaque) callconv(lib.calling_conv) void;
-
-+    /// C function pointer type for the progress_report callback.
-+    pub const ProgressReportFn = *const fn (Terminal, ?*anyopaque, *const ProgressReport) callconv(lib.calling_conv) void;
-+
-     /// C function pointer type for the size callback.
-     /// Returns true and fills out_size if size is available,
-     /// or returns false to silently ignore the query.
-@@ -200,6 +238,32 @@ const Effects = struct {
-         return func(@ptrCast(wrapper), wrapper.effects.userdata, &request);
-     }
- 
-+    fn clipboardReadTrampoline(handler: *Handler, location: clipboard.Location) ?[]const u8 {
-+        const stream_ptr: *Stream = @fieldParentPtr("handler", handler);
-+        const wrapper: *TerminalWrapper = @fieldParentPtr("stream", stream_ptr);
-+        const func = wrapper.effects.clipboard_read orelse return null;
-+        var data: lib.Buffer = .{};
-+        if (!func(@ptrCast(wrapper), wrapper.effects.userdata, location, &data)) return null;
-+        if (data.len > data.cap or (data.len > 0 and data.ptr == null)) return null;
-+        if (data.len == 0) return "";
-+        return data.ptr.?[0..data.len];
-+    }
-+
-+    fn desktopNotificationTrampoline(
-+        handler: *Handler,
-+        notification: Action.ShowDesktopNotification,
-+    ) void {
-+        const stream_ptr: *Stream = @fieldParentPtr("handler", handler);
-+        const wrapper: *TerminalWrapper = @fieldParentPtr("stream", stream_ptr);
-+        const func = wrapper.effects.desktop_notification orelse return;
-+        const request: DesktopNotification = .{
-+            .size = @sizeOf(DesktopNotification),
-+            .title = .{ .ptr = notification.title.ptr, .len = notification.title.len },
-+            .body = .{ .ptr = notification.body.ptr, .len = notification.body.len },
-+        };
-+        func(@ptrCast(wrapper), wrapper.effects.userdata, &request);
-+    }
-+
-     fn colorSchemeTrampoline(handler: *Handler) ?device_status.ColorScheme {
-         const stream_ptr: *Stream = @fieldParentPtr("handler", handler);
-         const wrapper: *TerminalWrapper = @fieldParentPtr("stream", stream_ptr);
-@@ -272,6 +336,21 @@ const Effects = struct {
-         func(@ptrCast(wrapper), wrapper.effects.userdata);
-     }
-
-+    fn progressReportTrampoline(
-+        handler: *Handler,
-+        report: osc.Command.ProgressReport,
-+    ) void {
-+        const stream_ptr: *Stream = @fieldParentPtr("handler", handler);
-+        const wrapper: *TerminalWrapper = @fieldParentPtr("stream", stream_ptr);
-+        const func = wrapper.effects.progress_report orelse return;
-+        const c_report: ProgressReport = .{
-+            .size = @sizeOf(ProgressReport),
-+            .state = @enumFromInt(@intFromEnum(report.state)),
-+            .progress = if (report.progress) |value| @intCast(value) else -1,
-+        };
-+        func(@ptrCast(wrapper), wrapper.effects.userdata, &c_report);
-+    }
-+
-     fn sizeTrampoline(handler: *Handler) ?size_report.Size {
-         const stream_ptr: *Stream = @fieldParentPtr("handler", handler);
-         const wrapper: *TerminalWrapper = @fieldParentPtr("stream", stream_ptr);
-@@ -358,12 +437,15 @@ fn new_(
-         .write_pty = &Effects.writePtyTrampoline,
-         .bell = &Effects.bellTrampoline,
-         .color_scheme = &Effects.colorSchemeTrampoline,
-+        .desktop_notification = &Effects.desktopNotificationTrampoline,
-         .device_attributes = &Effects.deviceAttributesTrampoline,
-         .enquiry = &Effects.enquiryTrampoline,
-         .xtversion = &Effects.xtversionTrampoline,
-         .title_changed = &Effects.titleChangedTrampoline,
-         .pwd_changed = &Effects.pwdChangedTrampoline,
-+        .progress_report = &Effects.progressReportTrampoline,
-         .size = &Effects.sizeTrampoline,
-+        .clipboard_read = &Effects.clipboardReadTrampoline,
-         .clipboard_write = &Effects.clipboardWriteTrampoline,
-     };
- 
-@@ -437,6 +519,9 @@ pub const Option = enum(c_int) {
-     glyph_protocol = 24,
-     pwd_changed = 25,
-     clipboard_write = 26,
-+    clipboard_read = 27,
-+    desktop_notification = 28,
-+    progress_report = 29,
- 
-     /// Input type expected for setting the option.
-     pub fn InType(comptime self: Option) type {
-@@ -445,12 +530,15 @@ pub const Option = enum(c_int) {
-             .write_pty => ?Effects.WritePtyFn,
-             .bell => ?Effects.BellFn,
-             .color_scheme => ?Effects.ColorSchemeFn,
-+            .desktop_notification => ?Effects.DesktopNotificationFn,
-             .device_attributes => ?Effects.DeviceAttributesFn,
-             .enquiry => ?Effects.EnquiryFn,
-             .xtversion => ?Effects.XtversionFn,
-             .title_changed => ?Effects.TitleChangedFn,
-             .pwd_changed => ?Effects.PwdChangedFn,
-+            .progress_report => ?Effects.ProgressReportFn,
-             .size_cb => ?Effects.SizeFn,
-+            .clipboard_read => ?Effects.ClipboardReadFn,
-             .clipboard_write => ?Effects.ClipboardWriteFn,
-             .title, .pwd => ?*const lib.String,
-             .color_foreground, .color_background, .color_cursor => ?*const color.RGB.C,
-@@ -502,12 +590,15 @@ fn setTyped(
-         .write_pty => wrapper.effects.write_pty = value,
-         .bell => wrapper.effects.bell = value,
-         .color_scheme => wrapper.effects.color_scheme = value,
-+        .desktop_notification => wrapper.effects.desktop_notification = value,
-         .device_attributes => wrapper.effects.device_attributes_cb = value,
-         .enquiry => wrapper.effects.enquiry = value,
-         .xtversion => wrapper.effects.xtversion = value,
-         .title_changed => wrapper.effects.title_changed = value,
-         .pwd_changed => wrapper.effects.pwd_changed = value,
-+        .progress_report => wrapper.effects.progress_report = value,
-         .size_cb => wrapper.effects.size_cb = value,
-+        .clipboard_read => wrapper.effects.clipboard_read = value,
-         .clipboard_write => wrapper.effects.clipboard_write = value,
-         .title => {
-             const str = if (value) |v| v.ptr[0..v.len] else "";
-@@ -577,7 +668,13 @@ fn setTyped(
-         .glyph_protocol => {
-             const enabled = (value orelse return .success).*;
-             wrapper.stream.handler.apc_handler.enable(.glyph, enabled);
--            if (!enabled) wrapper.terminal.glyph_glossary.clearAndFree(wrapper.terminal.gpa());
-+            if (!enabled) {
-+                wrapper.terminal.glyph_glossary.clearAndFree(wrapper.terminal.gpa());
-+                wrapper.terminal.glyph_glossary_generation +%= 1;
-+                if (wrapper.terminal.glyph_glossary_generation == 0) {
-+                    wrapper.terminal.glyph_glossary_generation = 1;
-+                }
-+            }
-         },
-         .selection => {
-             if (value) |ptr| {
-@@ -734,6 +831,7 @@ pub const TerminalData = enum(c_int) {
-     selection = 31,
-     viewport_active = 32,
-     vt_processing_error = 33,
-+    mouse_shape = 34,
-
      /// Output type expected for querying the data of the given kind.
      pub fn OutType(comptime self: TerminalData) type {
-@@ -747,6 +845,7 @@ pub const TerminalData = enum(c_int) {
-             .vt_processing_error,
-             => bool,
-             .active_screen => TerminalScreen,
-+            .mouse_shape => mouse.Shape,
+@@ -1552,6 +1554,7 @@ pub const TerminalData = enum(c_int) {
              .kitty_keyboard_flags => u8,
              .scrollbar => TerminalScrollbar,
              .cursor_style => style_c.Style,
-@@ -883,6 +982,7 @@ fn getTyped(
++            .mouse_shape => mouse.Shape,
+             .title, .pwd => lib.String,
+             .total_rows,
+             .scrollback_rows,
+@@ -1697,6 +1700,7 @@ fn getTyped(
          ),
          .viewport_active => out.* = t.screens.active.pages.viewport == .active,
          .vt_processing_error => out.* = wrapper.stream.handler.semantic_failure,
 +        .mouse_shape => out.* = t.mouse_shape,
-     }
-
-     return .success;
-@@ -2420,6 +2520,77 @@ test "set write_pty callback" {
-     try testing.expectEqual(@as(?*anyopaque, @ptrCast(&sentinel)), S.last_userdata);
- }
- 
-+test "DCS and color scheme responses through C API" {
-+    var t: Terminal = null;
-+    try testing.expectEqual(Result.success, new(
-+        &lib.alloc.test_allocator,
-+        &t,
-+        .{ .cols = 80, .rows = 24, .max_scrollback = 0 },
-+    ));
-+    defer free(t);
-+
-+    const S = struct {
-+        var written: std.ArrayList(u8) = .empty;
-+
-+        fn reset() void {
-+            written.clearRetainingCapacity();
-+        }
-+
-+        fn writePty(
-+            _: Terminal,
-+            _: ?*anyopaque,
-+            ptr: [*]const u8,
-+            len: usize,
-+        ) callconv(lib.calling_conv) void {
-+            written.appendSlice(
-+                testing.allocator,
-+                ptr[0..len],
-+            ) catch @panic("OOM");
-+        }
-+
-+        fn colorScheme(
-+            _: Terminal,
-+            _: ?*anyopaque,
-+            out: *device_status.ColorScheme,
-+        ) callconv(lib.calling_conv) bool {
-+            out.* = .dark;
-+            return true;
-+        }
-+    };
-+    S.written = .empty;
-+    defer S.written.deinit(testing.allocator);
-+
-+    try testing.expectEqual(
-+        Result.success,
-+        set(t, .write_pty, @ptrCast(&S.writePty)),
-+    );
-+
-+    const xtgettcap = "\x1bP+q544e;524742\x1b\\";
-+    vt_write(t, xtgettcap, xtgettcap.len);
-+    try testing.expectEqualStrings(
-+        "\x1bP1+r544E=787465726D2D67686F73747479\x1b\\" ++
-+            "\x1bP1+r524742=38\x1b\\",
-+        S.written.items,
-+    );
-+
-+    S.reset();
-+    const decrqss = "\x1b[1;3m\x1bP$qm\x1b\\";
-+    vt_write(t, decrqss, decrqss.len);
-+    try testing.expectEqualStrings(
-+        "\x1bP1$r0;1;3m\x1b\\",
-+        S.written.items,
-+    );
-+
-+    S.reset();
-+    try testing.expectEqual(
-+        Result.success,
-+        set(t, .color_scheme, @ptrCast(&S.colorScheme)),
-+    );
-+    const scheme = "\x1b[?996n";
-+    vt_write(t, scheme, scheme.len);
-+    try testing.expectEqualStrings("\x1b[?997;1n", S.written.items);
-+}
-+
- test "write_pty receives OSC color query response" {
-     var t: Terminal = null;
-     try testing.expectEqual(Result.success, new(
-@@ -2563,6 +2734,106 @@ test "bell without callback is silent" {
-     vt_write(t, "\x07", 1);
- }
-
-+test "desktop notification and progress callbacks" {
-+    var t: Terminal = null;
-+    try testing.expectEqual(Result.success, new(
-+        &lib.alloc.test_allocator,
-+        &t,
-+        .{ .cols = 80, .rows = 24, .max_scrollback = 0 },
-+    ));
-+    defer free(t);
-+
-+    const S = struct {
-+        var userdata: ?*anyopaque = null;
-+        var notification_count: usize = 0;
-+        var notification_size: usize = 0;
-+        var title: [64]u8 = undefined;
-+        var title_len: usize = 0;
-+        var body: [64]u8 = undefined;
-+        var body_len: usize = 0;
-+        var progress_count: usize = 0;
-+        var progress_size: usize = 0;
-+        var progress_state: ProgressState = .remove;
-+        var progress_value: i8 = -1;
-+
-+        fn desktopNotification(
-+            _: Terminal,
-+            ud: ?*anyopaque,
-+            notification: *const DesktopNotification,
-+        ) callconv(lib.calling_conv) void {
-+            userdata = ud;
-+            notification_count += 1;
-+            notification_size = notification.size;
-+            title_len = @min(title.len, notification.title.len);
-+            @memcpy(title[0..title_len], notification.title.ptr[0..title_len]);
-+            body_len = @min(body.len, notification.body.len);
-+            @memcpy(body[0..body_len], notification.body.ptr[0..body_len]);
-+        }
-+
-+        fn progressReport(
-+            _: Terminal,
-+            ud: ?*anyopaque,
-+            report: *const ProgressReport,
-+        ) callconv(lib.calling_conv) void {
-+            userdata = ud;
-+            progress_count += 1;
-+            progress_size = report.size;
-+            progress_state = report.state;
-+            progress_value = report.progress;
-+        }
-+    };
-+    S.userdata = null;
-+    S.notification_count = 0;
-+    S.progress_count = 0;
-+
-+    var sentinel: u8 = 99;
-+    try testing.expectEqual(Result.success, set(t, .userdata, @ptrCast(&sentinel)));
-+    try testing.expectEqual(Result.success, set(
-+        t,
-+        .desktop_notification,
-+        @ptrCast(&S.desktopNotification),
-+    ));
-+    try testing.expectEqual(Result.success, set(
-+        t,
-+        .progress_report,
-+        @ptrCast(&S.progressReport),
-+    ));
-+
-+    const notification = "\x1B]777;notify;Codex;Needs attention\x1B\\";
-+    vt_write(t, notification, notification.len);
-+    try testing.expectEqual(@as(usize, 1), S.notification_count);
-+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(&sentinel)), S.userdata);
-+    try testing.expectEqual(@sizeOf(DesktopNotification), S.notification_size);
-+    try testing.expectEqualStrings("Codex", S.title[0..S.title_len]);
-+    try testing.expectEqualStrings("Needs attention", S.body[0..S.body_len]);
-+
-+    const progress = "\x1B]9;4;2;73\x1B\\";
-+    vt_write(t, progress, progress.len);
-+    try testing.expectEqual(@as(usize, 1), S.progress_count);
-+    try testing.expectEqual(@sizeOf(ProgressReport), S.progress_size);
-+    try testing.expectEqual(ProgressState.@"error", S.progress_state);
-+    try testing.expectEqual(@as(i8, 73), S.progress_value);
-+}
-+
-+test "mouse shape terminal data follows OSC 22" {
-+    var t: Terminal = null;
-+    try testing.expectEqual(Result.success, new(
-+        &lib.alloc.test_allocator,
-+        &t,
-+        .{ .cols = 80, .rows = 24, .max_scrollback = 0 },
-+    ));
-+    defer free(t);
-+
-+    var shape: mouse.Shape = .default;
-+    try testing.expectEqual(Result.success, get(t, .mouse_shape, &shape));
-+    try testing.expectEqual(mouse.Shape.text, shape);
-+
-+    const pointer = "\x1B]22;pointer\x1B\\";
-+    vt_write(t, pointer, pointer.len);
-+    try testing.expectEqual(Result.success, get(t, .mouse_shape, &shape));
-+    try testing.expectEqual(mouse.Shape.pointer, shape);
-+}
-+
- test "set enquiry callback" {
-     var t: Terminal = null;
-     try testing.expectEqual(Result.success, new(
-@@ -2980,6 +3251,147 @@ test "clipboard_write without callback is unsupported and silent" {
-     try testing.expectEqual(clipboard.WriteResult.unsupported, result);
- }
- 
-+test "set clipboard_read callback" {
-+    var t: Terminal = null;
-+    try testing.expectEqual(Result.success, new(
-+        &lib.alloc.test_allocator,
-+        &t,
-+        .{
-+            .cols = 80,
-+            .rows = 24,
-+            .max_scrollback = 0,
-+        },
-+    ));
-+    defer free(t);
-+
-+    const S = struct {
-+        var last_terminal: Terminal = null;
-+        var last_userdata: ?*anyopaque = null;
-+        var last_location: clipboard.Location = .standard;
-+        var last_data: ?[]u8 = null;
-+        const response = "Android clipboard";
-+
-+        fn deinit() void {
-+            if (last_data) |data| testing.allocator.free(data);
-+            last_data = null;
-+        }
-+
-+        fn clipboardRead(
-+            terminal_: Terminal,
-+            ud: ?*anyopaque,
-+            location: clipboard.Location,
-+            out_data: *lib.Buffer,
-+        ) callconv(lib.calling_conv) bool {
-+            last_terminal = terminal_;
-+            last_userdata = ud;
-+            last_location = location;
-+            out_data.* = .{
-+                .ptr = @constCast(response.ptr),
-+                .cap = response.len,
-+                .len = response.len,
-+            };
-+            return true;
-+        }
-+
-+        fn writePty(
-+            _: Terminal,
-+            _: ?*anyopaque,
-+            ptr: [*]const u8,
-+            len: usize,
-+        ) callconv(lib.calling_conv) void {
-+            if (last_data) |data| testing.allocator.free(data);
-+            last_data = testing.allocator.dupe(u8, ptr[0..len]) catch
-+                @panic("OOM");
-+        }
-+    };
-+    S.last_terminal = null;
-+    S.last_userdata = null;
-+    S.last_location = .standard;
-+    S.last_data = null;
-+    defer S.deinit();
-+
-+    var sentinel: u8 = 73;
-+    try testing.expectEqual(Result.success, set(t, .userdata, @ptrCast(&sentinel)));
-+    try testing.expectEqual(Result.success, set(t, .write_pty, @ptrCast(&S.writePty)));
-+    try testing.expectEqual(Result.success, set(t, .clipboard_read, @ptrCast(&S.clipboardRead)));
-+
-+    const read = "\x1B]52;p;?\x1B\\";
-+    vt_write(t, read, read.len);
-+    try testing.expectEqual(t, S.last_terminal);
-+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(&sentinel)), S.last_userdata);
-+    try testing.expectEqual(clipboard.Location.primary, S.last_location);
-+    try testing.expectEqualStrings(
-+        "\x1B]52;p;QW5kcm9pZCBjbGlwYm9hcmQ=\x1B\\",
-+        S.last_data.?,
-+    );
-+
-+    // Removing the callback leaves subsequent reads unanswered.
-+    try testing.expectEqual(Result.success, set(t, .clipboard_read, null));
-+    S.deinit();
-+    vt_write(t, read, read.len);
-+    try testing.expect(S.last_data == null);
-+}
-+
-+test "clipboard_read rejects invalid buffers" {
-+    var t: Terminal = null;
-+    try testing.expectEqual(Result.success, new(
-+        &lib.alloc.test_allocator,
-+        &t,
-+        .{
-+            .cols = 80,
-+            .rows = 24,
-+            .max_scrollback = 0,
-+        },
-+    ));
-+    defer free(t);
-+
-+    const S = struct {
-+        var buffer: lib.Buffer = .{};
-+        var writes: usize = 0;
-+
-+        fn clipboardRead(
-+            _: Terminal,
-+            _: ?*anyopaque,
-+            _: clipboard.Location,
-+            out_data: *lib.Buffer,
-+        ) callconv(lib.calling_conv) bool {
-+            out_data.* = buffer;
-+            return true;
-+        }
-+
-+        fn writePty(
-+            _: Terminal,
-+            _: ?*anyopaque,
-+            _: [*]const u8,
-+            _: usize,
-+        ) callconv(lib.calling_conv) void {
-+            writes += 1;
-+        }
-+    };
-+
-+    try testing.expectEqual(Result.success, set(t, .write_pty, @ptrCast(&S.writePty)));
-+    try testing.expectEqual(Result.success, set(t, .clipboard_read, @ptrCast(&S.clipboardRead)));
-+
-+    const query = "\x1B]52;c;?\x1B\\";
-+    var byte: u8 = 'x';
-+    const invalid = [_]lib.Buffer{
-+        .{ .ptr = null, .cap = 1, .len = 1 },
-+        .{ .ptr = @ptrCast(&byte), .cap = 0, .len = 1 },
-+        .{ .ptr = @ptrCast(&byte), .cap = 4, .len = 5 },
-+    };
-+    for (invalid) |buffer| {
-+        S.buffer = buffer;
-+        S.writes = 0;
-+        vt_write(t, query, query.len);
-+        try testing.expectEqual(@as(usize, 0), S.writes);
-+    }
-+
-+    S.buffer = .{ .ptr = null, .cap = 0, .len = 0 };
-+    S.writes = 0;
-+    vt_write(t, query, query.len);
-+    try testing.expectEqual(@as(usize, 1), S.writes);
-+}
-+
- test "pwd_changed without callback is silent" {
-     var t: Terminal = null;
-     try testing.expectEqual(Result.success, new(
-diff --git a/src/terminal/stream_terminal.zig b/src/terminal/stream_terminal.zig
-index 1e4dc24be562b9616bb9943721c8912ae9d3a74d..97fe37648446e5e5a29ca28b5fff3a95cb3361da 100644
---- a/src/terminal/stream_terminal.zig
-+++ b/src/terminal/stream_terminal.zig
-@@ -16,6 +16,7 @@ const osc_color = @import("osc/parsers/color.zig");
- const kitty_color = @import("kitty/color.zig");
- const size_report = @import("size_report.zig");
- const Terminal = @import("Terminal.zig");
-+const terminfo = @import("../terminfo/main.zig");
- 
- const log = std.log.scoped(.stream_terminal);
- 
-@@ -60,6 +61,10 @@ pub const Handler = struct {
-     /// the kitty graphics protocol.
-     apc_handler: apc.Handler = .{},
- 
-+    /// Stateful parser for Device Control String protocols such as
-+    /// XTGETTCAP and DECRQSS.
-+    dcs_handler: @import("dcs.zig").Handler = .{},
-+
-     pub const Effects = struct {
-         /// Called when the terminal needs to write data back to the pty,
-         /// e.g. in response to a DECRQM query. The data is only valid
-@@ -70,6 +75,11 @@ pub const Handler = struct {
-         /// Called when the bell is rung (BEL).
-         bell: ?*const fn (*Handler) void,
-
-+        /// Called when the running program requests a desktop notification
-+        /// via OSC 9 or OSC 777. The title and body are borrowed and only
-+        /// valid for the duration of the callback.
-+        desktop_notification: ?*const fn (*Handler, Action.ShowDesktopNotification) void,
-+
-         /// Called in response to a color scheme DSR query (CSI ? 996 n).
-         /// Returns the current color scheme. Return null to silently
-         /// ignore the query.
-@@ -100,6 +110,9 @@ pub const Handler = struct {
-         /// handler.terminal.getPwd().
-         pwd_changed: ?*const fn (*Handler) void,
-
-+        /// Called when the running program reports progress via OSC 9;4.
-+        progress_report: ?*const fn (*Handler, osc.Command.ProgressReport) void,
-+
-         /// Called when the running program writes to a clipboard. The write
-         /// has a normalized destination and one or more decoded MIME
-         /// representations. All request, MIME, and data memory is borrowed
-@@ -107,13 +120,13 @@ pub const Handler = struct {
-         ///
-         /// A write with no contents clears the destination. A content entry
-         /// with empty data is a distinct empty representation.
--        ///
--        /// Clipboard read requests (OSC 52 with a "?" payload) are never
--        /// forwarded: answering one would let any program running in the
--        /// terminal silently read the user's clipboard, and a VT state
--        /// library has no way to mediate that with user consent.
-         clipboard_write: ?*const fn (*Handler, clipboard.Write) clipboard.WriteResult,
- 
-+        /// Called when the running program requests clipboard contents via
-+        /// OSC 52. The returned bytes are borrowed for the callback duration.
-+        /// Return null to leave the request unanswered.
-+        clipboard_read: ?*const fn (*Handler, clipboard.Location) ?[]const u8,
-+
-         /// Called in response to an XTVERSION query. Returns the version
-         /// string to report (e.g. "ghostty 1.2.3"). The returned memory
-         /// must be valid for the lifetime of the call. The maximum length
-@@ -125,10 +138,13 @@ pub const Handler = struct {
-         /// effects beyond that.
-         pub const readonly: Effects = .{
-             .bell = null,
-+            .clipboard_read = null,
-             .clipboard_write = null,
-             .color_scheme = null,
-+            .desktop_notification = null,
-             .device_attributes = null,
-             .enquiry = null,
-+            .progress_report = null,
-             .size = null,
-             .title_changed = null,
-             .pwd_changed = null,
-@@ -145,6 +161,7 @@ pub const Handler = struct {
- 
-     pub fn deinit(self: *Handler) void {
-         self.apc_handler.deinit();
-+        self.dcs_handler.deinit();
-     }
- 
-     /// Resize the terminal and apply any side effects (if supported)
-@@ -309,6 +326,7 @@ pub const Handler = struct {
-
-             // Effect-based handlers
-             .bell => self.bell(),
-+            .show_desktop_notification => self.desktopNotification(value),
-             .device_attributes => self.reportDeviceAttributes(value),
-             .device_status => self.deviceStatus(value.request),
-             .enquiry => self.reportEnquiry(),
-@@ -318,6 +336,7 @@ pub const Handler = struct {
-             .size_report => self.reportSize(value),
-             .window_title => try self.windowTitle(value.title),
-             .report_pwd => try self.reportPwd(value.url),
-+            .progress_report => self.progressReport(value),
-             .xtversion => self.reportXtversion(),
-             .clipboard_contents => self.clipboardContents(
-                 value.kind,
-@@ -327,16 +346,11 @@ pub const Handler = struct {
-                 log.warn("error handling clipboard write err={}", .{err});
-             },
- 
--            // No supported DCS commands have any terminal-modifying effects,
--            // but they may in the future. For now we just ignore it.
--            .dcs_hook,
--            .dcs_put,
--            .dcs_unhook,
--            => {},
-+            .dcs_hook => try self.dcsHook(value),
-+            .dcs_put => try self.dcsPut(value),
-+            .dcs_unhook => try self.dcsUnhook(),
- 
-             // Have no terminal-modifying effect
--            .show_desktop_notification,
--            .progress_report,
-             .title_push,
-             .title_pop,
-             => {},
-@@ -348,23 +362,151 @@ pub const Handler = struct {
-         func(self, data);
-     }
- 
-+    fn desktopNotification(
-+        self: *Handler,
-+        notification: Action.ShowDesktopNotification,
-+    ) void {
-+        const func = self.effects.desktop_notification orelse return;
-+        func(self, notification);
-+    }
-+
-+    fn progressReport(self: *Handler, report: osc.Command.ProgressReport) void {
-+        const func = self.effects.progress_report orelse return;
-+        func(self, report);
-+    }
-+
-+    inline fn dcsHook(
-+        self: *Handler,
-+        value: Action.Value(.dcs_hook),
-+    ) !void {
-+        var command = self.dcs_handler.hook(
-+            self.terminal.gpa(),
-+            value,
-+        ) orelse return;
-+        defer command.deinit();
-+        try self.dcsCommand(&command);
-+    }
-+
-+    inline fn dcsPut(self: *Handler, byte: u8) !void {
-+        var command = self.dcs_handler.put(byte) orelse return;
-+        defer command.deinit();
-+        try self.dcsCommand(&command);
-+    }
-+
-+    inline fn dcsUnhook(self: *Handler) !void {
-+        var command = self.dcs_handler.unhook() orelse return;
-+        defer command.deinit();
-+        try self.dcsCommand(&command);
-+    }
-+
-+    fn dcsCommand(
-+        self: *Handler,
-+        command: *@import("dcs.zig").Command,
-+    ) !void {
-+        switch (command.*) {
-+            .tmux => {},
-+            .xtgettcap => |*query| {
-+                const map = comptime terminfo.ghostty.xtgettcapMap();
-+                const alloc = self.terminal.gpa();
-+                while (query.next()) |key| {
-+                    const response = map.get(key) orelse continue;
-+                    const terminated = try alloc.dupeZ(u8, response);
-+                    defer alloc.free(terminated);
-+                    self.writePty(terminated);
-+                }
-+            },
-+            .decrqss => |request| {
-+                var response: [129]u8 = undefined;
-+                var output = std.io.fixedBufferStream(response[0 .. response.len - 1]);
-+                const writer = output.writer();
-+                const prefix_fmt = "\x1bP{d}$r";
-+                const prefix_len = std.fmt.comptimePrint(prefix_fmt, .{0}).len;
-+                output.pos = prefix_len;
-+
-+                switch (request) {
-+                    .none => {},
-+                    .sgr => {
-+                        const attrs = try self.terminal.printAttributes(
-+                            output.buffer[output.pos..],
-+                        );
-+                        output.pos += attrs.len;
-+                        try writer.writeByte('m');
-+                    },
-+                    .decscusr => {
-+                        const blink = self.terminal.modes.get(.cursor_blinking);
-+                        const style: u8 = switch (self.terminal.screens.active.cursor.cursor_style) {
-+                            .block, .block_hollow => if (blink) 1 else 2,
-+                            .underline => if (blink) 3 else 4,
-+                            .bar => if (blink) 5 else 6,
-+                        };
-+                        try writer.print("{d} q", .{style});
-+                    },
-+                    .decstbm => try writer.print("{d};{d}r", .{
-+                        self.terminal.scrolling_region.top + 1,
-+                        self.terminal.scrolling_region.bottom + 1,
-+                    }),
-+                    .decslrm => if (self.terminal.modes.get(
-+                        .enable_left_and_right_margin,
-+                    )) {
-+                        try writer.print("{d};{d}s", .{
-+                            self.terminal.scrolling_region.left + 1,
-+                            self.terminal.scrolling_region.right + 1,
-+                        });
-+                    },
-+                }
-+
-+                const valid = output.pos > prefix_len;
-+                try writer.writeAll("\x1b\\");
-+                _ = try std.fmt.bufPrint(
-+                    response[0..prefix_len],
-+                    prefix_fmt,
-+                    .{@intFromBool(valid)},
-+                );
-+                response[output.pos] = 0;
-+                self.writePty(response[0..output.pos :0]);
-+            },
-+        }
-+    }
-+
-     fn bell(self: *Handler) void {
-         const func = self.effects.bell orelse return;
-         func(self);
-     }
- 
-     fn clipboardContents(self: *Handler, kind: u8, data: []const u8) !void {
--        const func = self.effects.clipboard_write orelse return;
--
--        // Read requests are deliberately not forwarded; see the effect docs.
--        if (data.len == 1 and data[0] == '?') return;
--
-         const location: clipboard.Location = switch (kind) {
-             's' => .selection,
-             'p' => .primary,
-             else => .standard,
-         };
- 
-+        if (data.len == 1 and data[0] == '?') {
-+            const func = self.effects.clipboard_read orelse return;
-+            const contents = func(self, location) orelse return;
-+            const encoder = std.base64.standard.Encoder;
-+            const encoded_len = encoder.calcSize(contents.len);
-+            const alloc = self.terminal.gpa();
-+            const response = try alloc.allocSentinel(u8, encoded_len + 9, 0);
-+            defer alloc.free(response);
-+
-+            const selector: u8 = switch (location) {
-+                .selection => 's',
-+                .primary => 'p',
-+                else => 'c',
-+            };
-+            const prefix = try std.fmt.bufPrint(response, "\x1b]52;{c};", .{selector});
-+            _ = encoder.encode(
-+                response[prefix.len .. prefix.len + encoded_len],
-+                contents,
-+            );
-+            response[response.len - 2] = '\x1b';
-+            response[response.len - 1] = '\\';
-+            self.writePty(response);
-+            return;
-+        }
-+
-+        const func = self.effects.clipboard_write orelse return;
-+
-         // OSC 52 uses an empty payload to clear the selected clipboard.
-         if (data.len == 0) {
-             _ = func(self, .{
-@@ -1899,6 +2041,97 @@ test "bell effect callback" {
-     }
- }
-
-+test "desktop notification effect callback" {
-+    var t: Terminal = try .init(testing.allocator, .{ .cols = 80, .rows = 24 });
-+    defer t.deinit(testing.allocator);
-+
-+    const S = struct {
-+        var count: usize = 0;
-+        var title: [64]u8 = undefined;
-+        var title_len: usize = 0;
-+        var body: [64]u8 = undefined;
-+        var body_len: usize = 0;
-+
-+        fn desktopNotification(
-+            _: *Handler,
-+            notification: Action.ShowDesktopNotification,
-+        ) void {
-+            count += 1;
-+            title_len = @min(title.len, notification.title.len);
-+            @memcpy(title[0..title_len], notification.title[0..title_len]);
-+            body_len = @min(body.len, notification.body.len);
-+            @memcpy(body[0..body_len], notification.body[0..body_len]);
-+        }
-+    };
-+    S.count = 0;
-+    S.title_len = 0;
-+    S.body_len = 0;
-+
-+    var handler: Handler = .init(&t);
-+    handler.effects.desktop_notification = &S.desktopNotification;
-+    var s: Stream = .initAlloc(testing.allocator, handler);
-+    defer s.deinit();
-+
-+    s.nextSlice("\x1B]9;Build ");
-+    try testing.expectEqual(@as(usize, 0), S.count);
-+    s.nextSlice("complete\x1B\\");
-+    try testing.expectEqual(@as(usize, 1), S.count);
-+    try testing.expectEqualStrings("", S.title[0..S.title_len]);
-+    try testing.expectEqualStrings("Build complete", S.body[0..S.body_len]);
-+
-+    s.nextSlice("\x1B]777;notify;Codex;Needs attention\x07");
-+    try testing.expectEqual(@as(usize, 2), S.count);
-+    try testing.expectEqualStrings("Codex", S.title[0..S.title_len]);
-+    try testing.expectEqualStrings("Needs attention", S.body[0..S.body_len]);
-+}
-+
-+test "progress report effect callback" {
-+    var t: Terminal = try .init(testing.allocator, .{ .cols = 80, .rows = 24 });
-+    defer t.deinit(testing.allocator);
-+
-+    const S = struct {
-+        var count: usize = 0;
-+        var state: osc.Command.ProgressReport.State = .remove;
-+        var progress: ?u8 = null;
-+
-+        fn progressReport(_: *Handler, report: osc.Command.ProgressReport) void {
-+            count += 1;
-+            state = report.state;
-+            progress = report.progress;
-+        }
-+    };
-+    S.count = 0;
-+    S.state = .remove;
-+    S.progress = null;
-+
-+    var handler: Handler = .init(&t);
-+    handler.effects.progress_report = &S.progressReport;
-+    var s: Stream = .initAlloc(testing.allocator, handler);
-+    defer s.deinit();
-+
-+    const cases = [_]struct {
-+        sequence: []const u8,
-+        state: osc.Command.ProgressReport.State,
-+        progress: ?u8,
-+    }{
-+        .{ .sequence = "\x1B]9;4;0;\x1B\\", .state = .remove, .progress = null },
-+        .{ .sequence = "\x1B]9;4;1;42\x07", .state = .set, .progress = 42 },
-+        .{ .sequence = "\x1B]9;4;2;7\x1B\\", .state = .@"error", .progress = 7 },
-+        .{ .sequence = "\x1B]9;4;3\x1B\\", .state = .indeterminate, .progress = null },
-+        .{ .sequence = "\x1B]9;4;4;75\x1B\\", .state = .pause, .progress = 75 },
-+    };
-+
-+    for (cases, 1..) |case, expected_count| {
-+        const midpoint = case.sequence.len / 2;
-+        s.nextSlice(case.sequence[0..midpoint]);
-+        try testing.expectEqual(expected_count - 1, S.count);
-+        s.nextSlice(case.sequence[midpoint..]);
-+        try testing.expectEqual(expected_count, S.count);
-+        try testing.expectEqual(case.state, S.state);
-+        try testing.expectEqual(case.progress, S.progress);
-+    }
-+}
-+
- test "clipboard_write effect callback" {
-     var t: Terminal = try .init(testing.allocator, .{ .cols = 80, .rows = 24 });
-     defer t.deinit(testing.allocator);
-@@ -2049,6 +2282,151 @@ test "clipboard_write allocation failure is ignored" {
-     try testing.expect(!s.handler.semantic_failure);
- }
- 
-+test "clipboard_read effect callback" {
-+    var t: Terminal = try .init(testing.allocator, .{ .cols = 80, .rows = 24 });
-+    defer t.deinit(testing.allocator);
-+
-+    const S = struct {
-+        var contents: ?[]const u8 = "Android \xf0\x9f\x93\x8b";
-+        var last_location: clipboard.Location = .standard;
-+        var written: ?[]u8 = null;
-+
-+        fn deinit() void {
-+            if (written) |value| testing.allocator.free(value);
-+            written = null;
-+        }
-+
-+        fn clipboardRead(_: *Handler, location: clipboard.Location) ?[]const u8 {
-+            last_location = location;
-+            return contents;
-+        }
-+
-+        fn writePty(_: *Handler, data: [:0]const u8) void {
-+            if (written) |value| testing.allocator.free(value);
-+            written = testing.allocator.dupe(u8, data) catch @panic("OOM");
-+        }
-+    };
-+    S.contents = "Android \xf0\x9f\x93\x8b";
-+    S.last_location = .standard;
-+    S.written = null;
-+    defer S.deinit();
-+
-+    var handler: Handler = .init(&t);
-+    handler.effects.clipboard_read = &S.clipboardRead;
-+    handler.effects.write_pty = &S.writePty;
-+
-+    var s: Stream = .initAlloc(testing.allocator, handler);
-+    defer s.deinit();
-+
-+    s.nextSlice("\x1B]52;s;?\x1B\\");
-+    try testing.expectEqual(clipboard.Location.selection, S.last_location);
-+    try testing.expectEqualStrings(
-+        "\x1B]52;s;QW5kcm9pZCDwn5OL\x1B\\",
-+        S.written.?,
-+    );
-+
-+    S.contents = "";
-+    s.nextSlice("\x1B]52;p;?\x07");
-+    try testing.expectEqual(clipboard.Location.primary, S.last_location);
-+    try testing.expectEqualStrings("\x1B]52;p;\x1B\\", S.written.?);
-+
-+    S.contents = null;
-+    S.deinit();
-+    s.nextSlice("\x1B]52;c;?\x1B\\");
-+    try testing.expect(S.written == null);
-+
-+    // Unknown selectors normalize to the standard clipboard and response.
-+    S.contents = "x";
-+    s.nextSlice("\x1B]52;q;?\x1B\\");
-+    try testing.expectEqual(clipboard.Location.standard, S.last_location);
-+    try testing.expectEqualStrings("\x1B]52;c;eA==\x1B\\", S.written.?);
-+}
-+
-+test "clipboard_read randomized round trips" {
-+    var t: Terminal = try .init(testing.allocator, .{ .cols = 80, .rows = 24 });
-+    defer t.deinit(testing.allocator);
-+
-+    const S = struct {
-+        var contents: []const u8 = "";
-+        var written: ?[]u8 = null;
-+
-+        fn deinit() void {
-+            if (written) |value| testing.allocator.free(value);
-+            written = null;
-+        }
-+
-+        fn clipboardRead(_: *Handler, _: clipboard.Location) ?[]const u8 {
-+            return contents;
-+        }
-+
-+        fn writePty(_: *Handler, data: [:0]const u8) void {
-+            deinit();
-+            written = testing.allocator.dupe(u8, data) catch @panic("OOM");
-+        }
-+    };
-+    S.contents = "";
-+    S.written = null;
-+    defer S.deinit();
-+
-+    var handler: Handler = .init(&t);
-+    handler.effects.clipboard_read = &S.clipboardRead;
-+    handler.effects.write_pty = &S.writePty;
-+
-+    var s: Stream = .initAlloc(testing.allocator, handler);
-+    defer s.deinit();
-+
-+    var prng = std.Random.DefaultPrng.init(0x52c1a0b);
-+    const random = prng.random();
-+    var data: [4096]u8 = undefined;
-+    var expected: [std.base64.standard.Encoder.calcSize(data.len) + 9]u8 =
-+        undefined;
-+    const selectors = [_]u8{ 'c', 's', 'p', 'q', '0' };
-+
-+    for (0..5000) |_| {
-+        const len = random.intRangeAtMost(usize, 0, data.len);
-+        random.bytes(data[0..len]);
-+        S.contents = data[0..len];
-+
-+        const requested = selectors[random.uintLessThan(usize, selectors.len)];
-+        const normalized: u8 = switch (requested) {
-+            's' => 's',
-+            'p' => 'p',
-+            else => 'c',
-+        };
-+        const sequence = [_]u8{
-+            '\x1B', ']', '5', '2', ';', requested, ';', '?', '\x1B', '\\',
-+        };
-+        var offset: usize = 0;
-+        while (offset < sequence.len) {
-+            const count = random.intRangeAtMost(
-+                usize,
-+                1,
-+                sequence.len - offset,
-+            );
-+            s.nextSlice(sequence[offset..][0..count]);
-+            offset += count;
-+        }
-+
-+        const encoded_len = std.base64.standard.Encoder.calcSize(len);
-+        const prefix = try std.fmt.bufPrint(
-+            &expected,
-+            "\x1B]52;{c};",
-+            .{normalized},
-+        );
-+        _ = std.base64.standard.Encoder.encode(
-+            expected[prefix.len .. prefix.len + encoded_len],
-+            data[0..len],
-+        );
-+        expected[prefix.len + encoded_len] = '\x1B';
-+        expected[prefix.len + encoded_len + 1] = '\\';
-+        try testing.expectEqualSlices(
-+            u8,
-+            expected[0 .. prefix.len + encoded_len + 2],
-+            S.written.?,
-+        );
-+    }
-+}
-+
- test "request mode DECRQM with write_pty callback" {
-     var t: Terminal = try .init(testing.allocator, .{ .cols = 80, .rows = 24 });
-     defer t.deinit(testing.allocator);
-@@ -2097,6 +2475,51 @@ test "request mode DECRQM with write_pty callback" {
-     }
- }
- 
-+test "DCS XTGETTCAP and DECRQSS responses" {
-+    var t: Terminal = try .init(testing.allocator, .{ .cols = 80, .rows = 24 });
-+    defer t.deinit(testing.allocator);
-+
-+    const S = struct {
-+        var written: std.ArrayList(u8) = .empty;
-+
-+        fn reset() void {
-+            written.clearRetainingCapacity();
-+        }
-+
-+        fn writePty(_: *Handler, data: [:0]const u8) void {
-+            written.appendSlice(testing.allocator, data) catch @panic("OOM");
-+        }
-+    };
-+    S.written = .empty;
-+    defer S.written.deinit(testing.allocator);
-+
-+    var handler: Handler = .init(&t);
-+    handler.effects.write_pty = &S.writePty;
-+    var s: Stream = .initAlloc(testing.allocator, handler);
-+    defer s.deinit();
-+
-+    // XTGETTCAP accepts hex-encoded capability names and returns one DCS
-+    // response per known capability.
-+    s.nextSlice("\x1bP+q544e;524742\x1b\\");
-+    try testing.expectEqualStrings(
-+        "\x1bP1+r544E=787465726D2D67686F73747479\x1b\\" ++
-+            "\x1bP1+r524742=38\x1b\\",
-+        S.written.items,
-+    );
-+
-+    S.reset();
-+    s.nextSlice("\x1b[1;3m\x1bP$qm\x1b\\");
-+    try testing.expectEqualStrings("\x1bP1$r0;1;3m\x1b\\", S.written.items);
-+
-+    S.reset();
-+    s.nextSlice("\x1b[4 q\x1bP$q q\x1b\\");
-+    try testing.expectEqualStrings("\x1bP1$r4 q\x1b\\", S.written.items);
-+
-+    S.reset();
-+    s.nextSlice("\x1b[3;20r\x1bP$qr\x1b\\");
-+    try testing.expectEqualStrings("\x1bP1$r3;20r\x1b\\", S.written.items);
-+}
-+
- test "stream: CSI W with intermediate but no params" {
-     // Regression test from AFL++ crash. CSI ? W without
-     // parameters caused an out-of-bounds access on input.params[0].
-diff --git a/test/fuzz-libghostty/build.zig b/test/fuzz-libghostty/build.zig
-index 88d748a68ff4959e91637ccc817ec297ea47fa25..d4076d777d574e06bf02aa49d7d645db8005801a 100644
---- a/test/fuzz-libghostty/build.zig
-+++ b/test/fuzz-libghostty/build.zig
-@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
-     const optimize = b.standardOptimizeOption(.{});
- 
-     const ghostty_dep = b.lazyDependency("ghostty", .{
--        .simd = false,
-+        .simd = true,
-     });
- 
-     inline for (fuzzers) |fuzzer| {
-@@ -44,10 +44,12 @@ pub fn build(b: *std.Build) void {
-             .target = target,
-             .optimize = optimize,
-         });
-+        var ghostty_module: ?*std.Build.Module = null;
-         if (ghostty_dep) |dep| {
-+            ghostty_module = dep.module("ghostty-vt");
-             lib_mod.addImport(
-                 "ghostty-vt",
--                dep.module("ghostty-vt"),
-+                ghostty_module.?,
-             );
-         }
- 
-@@ -58,7 +60,18 @@ pub fn build(b: *std.Build) void {
-         lib.root_module.stack_check = false;
-         lib.root_module.fuzz = true;
- 
--        const exe = afl.addInstrumentedExe(b, lib);
-+        var link_objects: std.ArrayList(std.Build.LazyPath) = .empty;
-+        if (ghostty_module) |module| {
-+            for (module.link_objects.items) |object| switch (object) {
-+                .static_path => |path| link_objects.append(b.allocator, path) catch @panic("OOM"),
-+                .other_step => |step| link_objects.append(
-+                    b.allocator,
-+                    step.getEmittedBin(),
-+                ) catch @panic("OOM"),
-+                else => {},
-+            };
-+        }
-+        const exe = afl.addInstrumentedExe(b, lib, link_objects.items);
-         const run = afl.addFuzzerRun(
-             b,
-             exe,
-diff --git a/test/fuzz-libghostty/src/fuzz_stream.zig b/test/fuzz-libghostty/src/fuzz_stream.zig
-index 75c6fd425f473369351fc16c69fc1c6fc9401de8..48845544d2ced8fd2beb9dbcadf309e6b2445a38 100644
---- a/test/fuzz-libghostty/src/fuzz_stream.zig
-+++ b/test/fuzz-libghostty/src/fuzz_stream.zig
-@@ -1,6 +1,7 @@
- const std = @import("std");
- const ghostty_vt = @import("ghostty-vt");
- const mem = @import("mem.zig");
-+const clipboard = ghostty_vt.clipboard;
- const Terminal = ghostty_vt.Terminal;
- const TerminalStream = ghostty_vt.TerminalStream;
- 
-@@ -8,6 +9,31 @@ const TerminalStream = ghostty_vt.TerminalStream;
- /// allocation overhead in the fuzzer. The allocator is backed by a fixed
- /// buffer, and every fuzz input resets the bump pointer to the start.
- var fuzz_alloc: mem.FuzzAllocator(64 * 1024 * 1024) = .{};
-+var clipboard_data: []const u8 = "";
-+var write_pty_bytes: usize = 0;
-+
-+fn clipboardRead(
-+    _: *TerminalStream.Handler,
-+    _: clipboard.Location,
-+) ?[]const u8 {
-+    return clipboard_data;
-+}
-+
-+fn clipboardWrite(
-+    _: *TerminalStream.Handler,
-+    write: clipboard.Write,
-+) clipboard.WriteResult {
-+    var checksum: u32 = @bitCast(@intFromEnum(write.location));
-+    for (write.contents) |content| {
-+        for (content.mime) |byte| checksum +%= byte;
-+        for (content.data) |byte| checksum +%= byte;
-+    }
-+    return @enumFromInt(@as(c_int, @intCast(checksum % 6)));
-+}
-+
-+fn writePty(_: *TerminalStream.Handler, data: [:0]const u8) void {
-+    write_pty_bytes +%= data.len;
-+}
- 
- pub export fn zig_fuzz_init() callconv(.c) void {
-     fuzz_alloc.init();
-@@ -23,6 +49,8 @@ pub export fn zig_fuzz_test(
-     fuzz_alloc.reset();
-     const alloc = fuzz_alloc.allocator();
-     const input = buf[0..len];
-+    clipboard_data = input[1..@min(input.len, 64 * 1024)];
-+    write_pty_bytes = 0;
- 
-     // Allocate a terminal; if we run out of fixed-buffer space just
-     // skip this input (not a bug, just a very large allocation).
-@@ -33,7 +61,11 @@ pub export fn zig_fuzz_test(
-     }) catch return;
-     defer t.deinit(alloc);
- 
--    var stream: TerminalStream = t.vtStream();
-+    var handler: TerminalStream.Handler = .init(&t);
-+    handler.effects.clipboard_read = &clipboardRead;
-+    handler.effects.clipboard_write = &clipboardWrite;
-+    handler.effects.write_pty = &writePty;
-+    var stream: TerminalStream = .initAlloc(alloc, handler);
-     defer stream.deinit();
- 
-     // Use the first byte to decide between the scalar and slice paths
-@@ -48,4 +80,6 @@ pub export fn zig_fuzz_test(
-         // Scalar path — exercises byte-at-a-time UTF-8 decoding
-         for (data) |byte| stream.next(byte);
-     }
-+
-+    std.mem.doNotOptimizeAway(write_pty_bytes);
- }
+         .vt_ground => out.* = wrapper.stream.ground(),
+         .scrollback_max_bytes => {
+             const max = t.screens.get(.primary).?.pages.limits.bytes.explicit;

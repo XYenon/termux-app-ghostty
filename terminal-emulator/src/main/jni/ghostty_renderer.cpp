@@ -1162,7 +1162,9 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
     bool full_redraw = !renderer->frame_initialized || dimensions_changed ||
         glyphs_changed || kitty_graphics ||
         dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL;
-    ghostty_render_state_colors_get(engine->render_state, &colors);
+    colors.size = sizeof(colors);
+    ghostty_render_state_get(engine->render_state,
+                             GHOSTTY_RENDER_STATE_DATA_COLORS, &colors);
 
     renderer->frame.resize(frame_size);
     if (full_redraw) {
