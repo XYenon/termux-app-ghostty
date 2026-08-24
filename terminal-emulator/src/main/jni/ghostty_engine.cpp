@@ -252,6 +252,20 @@ jstring new_java_string_from_utf8(JNIEnv *env, const std::string &value) {
         static_cast<jsize>(utf16.size()));
 }
 
+bool byte_array_to_vector(JNIEnv *env, jbyteArray value,
+                          std::vector<uint8_t> &result) {
+    result.clear();
+    if (!value) return true;
+    const jsize length = env->GetArrayLength(value);
+    if (env->ExceptionCheck()) return false;
+    result.resize(static_cast<size_t>(length));
+    if (length > 0) {
+        env->GetByteArrayRegion(
+            value, 0, length, reinterpret_cast<jbyte *>(result.data()));
+    }
+    return !env->ExceptionCheck();
+}
+
 void update_string_field(GhosttyTerminal terminal,
                          TermuxGhosttyEngine *engine,
                          GhosttyTerminalData data_type, char *&field) {
@@ -570,8 +584,9 @@ void clipboard_read(GhosttyTerminal, void *userdata,
         read->reply(read, &reply);
         return;
     }
+    const bool reads_content = read->mimes_len > 0;
     if (engine->clipboard_read_requests_remaining == 0 ||
-        engine->clipboard_read_bytes_remaining == 0) {
+        (reads_content && engine->clipboard_read_bytes_remaining == 0)) {
         reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
         read->reply(read, &reply);
         return;
@@ -611,7 +626,7 @@ void clipboard_read(GhosttyTerminal, void *userdata,
     }
     jint permission = 1;
     try {
-        if (read->mimes_len > 0 || read->list) {
+        if (read->mimes_len > 0) {
             std::string name_value = ghostty_string(read->name);
             jstring name = new_java_string_from_utf8(env, name_value);
             if (!name || env->ExceptionCheck()) {
@@ -661,7 +676,7 @@ void clipboard_read(GhosttyTerminal, void *userdata,
     std::vector<std::vector<uint8_t>> buffers;
     std::vector<GhosttyClipboardContent> contents;
     bool failed = false;
-    size_t total_bytes = 0;
+    size_t content_bytes = 0;
     static constexpr uint8_t kEmptyClipboardData = 0;
     try {
         jsize available_len = env->GetArrayLength(java_mimes);
@@ -674,14 +689,11 @@ void clipboard_read(GhosttyTerminal, void *userdata,
                 const char *chars = mime
                     ? env->GetStringUTFChars(mime, nullptr) : nullptr;
                 size_t length = chars ? strlen(chars) : 0;
-                const size_t request_budget = std::min(
-                    kMaxClipboardBytes, engine->clipboard_read_bytes_remaining);
                 if (!chars || env->ExceptionCheck() || length == 0 ||
-                    length > kMaxMimeBytes || length > request_budget - total_bytes) {
+                    length > kMaxMimeBytes) {
                     failed = true;
                 } else {
                     available_strings.emplace_back(chars, length);
-                    total_bytes += length;
                 }
                 if (chars) env->ReleaseStringUTFChars(mime, chars);
                 if (mime) env->DeleteLocalRef(mime);
@@ -715,12 +727,12 @@ void clipboard_read(GhosttyTerminal, void *userdata,
             const size_t request_budget = std::min(
                 kMaxClipboardBytes, engine->clipboard_read_bytes_remaining);
             if (length < 0 || static_cast<size_t>(length) >
-                    request_budget - total_bytes) {
+                    request_budget - content_bytes) {
                 env->DeleteLocalRef(bytes);
                 failed = true;
                 break;
             }
-            total_bytes += static_cast<size_t>(length);
+            content_bytes += static_cast<size_t>(length);
             buffers.emplace_back(static_cast<size_t>(length));
             if (length > 0)
                 env->GetByteArrayRegion(bytes, 0, length,
@@ -746,7 +758,7 @@ void clipboard_read(GhosttyTerminal, void *userdata,
         failed = true;
     }
     if (!failed) {
-        engine->clipboard_read_bytes_remaining -= total_bytes;
+        engine->clipboard_read_bytes_remaining -= content_bytes;
         reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS;
         reply.contents = contents.empty() ? nullptr : contents.data();
         reply.contents_len = contents.size();
@@ -845,6 +857,7 @@ GhosttyKey map_android_key(jint key) {
         case AKEYCODE_DEL: return GHOSTTY_KEY_BACKSPACE;
         case AKEYCODE_FORWARD_DEL: return GHOSTTY_KEY_DELETE;
         case AKEYCODE_ENTER: return GHOSTTY_KEY_ENTER;
+        case AKEYCODE_DPAD_CENTER: return GHOSTTY_KEY_ENTER;
         case AKEYCODE_NUMPAD_ENTER: return GHOSTTY_KEY_NUMPAD_ENTER;
         case AKEYCODE_TAB: return GHOSTTY_KEY_TAB;
         case AKEYCODE_SPACE: return GHOSTTY_KEY_SPACE;
@@ -887,6 +900,8 @@ GhosttyKey map_android_key(jint key) {
         case AKEYCODE_META_LEFT: return GHOSTTY_KEY_META_LEFT;
         case AKEYCODE_META_RIGHT: return GHOSTTY_KEY_META_RIGHT;
         case AKEYCODE_CAPS_LOCK: return GHOSTTY_KEY_CAPS_LOCK;
+        case AKEYCODE_SYSRQ: return GHOSTTY_KEY_PRINT_SCREEN;
+        case AKEYCODE_BREAK: return GHOSTTY_KEY_PAUSE;
         default: return GHOSTTY_KEY_UNIDENTIFIED;
     }
 }
@@ -1555,13 +1570,15 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSetKittyGraphicsOptions(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativePaste(
-    JNIEnv *env, jclass, jlong handle, jstring text) {
+    JNIEnv *env, jclass, jlong handle, jbyteArray text) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
-    const char *utf8 = env->GetStringUTFChars(text, nullptr);
-    if (!utf8) return;
-    size_t length = strlen(utf8);
-    std::vector<uint8_t> input(utf8, utf8 + length);
-    env->ReleaseStringUTFChars(text, utf8);
+    std::vector<uint8_t> input;
+    try {
+        if (!byte_array_to_vector(env, text, input)) return;
+    } catch (const std::bad_alloc &) {
+        throw_illegal_state(env, "Out of memory encoding terminal paste");
+        return;
+    }
 
     static constexpr uint8_t mime_data[] = "text/plain";
     const GhosttyClipboardContent content{
@@ -1604,10 +1621,16 @@ Java_com_termux_terminal_GhosttyTerminal_nativePaste(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeSendKey(
     JNIEnv *env, jclass, jlong handle, jint key, jint action, jint modifiers,
-    jstring text, jint unshifted_codepoint) {
+    jint consumed_modifiers, jbyteArray text, jint unshifted_codepoint,
+    jboolean composing) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
-    const char *utf8 = text ? env->GetStringUTFChars(text, nullptr) : nullptr;
-    size_t utf8_len = utf8 ? strlen(utf8) : 0;
+    std::vector<uint8_t> utf8;
+    try {
+        if (!byte_array_to_vector(env, text, utf8)) return false;
+    } catch (const std::bad_alloc &) {
+        throw_illegal_state(env, "Out of memory encoding terminal key");
+        return false;
+    }
     char output[128];
     size_t written = 0;
     termux_ghostty_engine_lock(engine);
@@ -1618,14 +1641,29 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSendKey(
         engine->key_event, static_cast<GhosttyKeyAction>(action));
     ghostty_key_event_set_mods(engine->key_event,
                                static_cast<GhosttyMods>(modifiers));
-    ghostty_key_event_set_utf8(engine->key_event, utf8, utf8_len);
+    ghostty_key_event_set_consumed_mods(
+        engine->key_event, static_cast<GhosttyMods>(consumed_modifiers));
+    ghostty_key_event_set_composing(engine->key_event, composing);
+    ghostty_key_event_set_utf8(engine->key_event,
+                               utf8.empty() ? nullptr :
+                                   reinterpret_cast<const char *>(utf8.data()),
+                               utf8.size());
     ghostty_key_event_set_unshifted_codepoint(
         engine->key_event, static_cast<uint32_t>(unshifted_codepoint));
     GhosttyResult result = ghostty_key_encoder_encode(
         engine->key_encoder, engine->key_event, output, sizeof(output),
         &written);
     termux_ghostty_engine_unlock(engine);
-    if (utf8) env->ReleaseStringUTFChars(text, utf8);
+    if (result == GHOSTTY_SUCCESS && written == 0 && !composing &&
+        action != GHOSTTY_KEY_ACTION_RELEASE) {
+        const char *fallback = nullptr;
+        if (key == AKEYCODE_SYSRQ) fallback = "\x1b[32~";
+        if (key == AKEYCODE_BREAK) fallback = "\x1b[34~";
+        if (fallback) {
+            written = strlen(fallback);
+            memcpy(output, fallback, written);
+        }
+    }
     if (result == GHOSTTY_SUCCESS && written > 0) {
         termux_ghostty_engine_write(
             engine, reinterpret_cast<const uint8_t *>(output), written);

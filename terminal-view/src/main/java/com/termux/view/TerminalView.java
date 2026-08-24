@@ -43,6 +43,8 @@ import com.termux.terminal.TerminalSession;
 import com.termux.view.textselection.TextSelectionCursorController;
 
 import java.io.File;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -97,6 +99,8 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
 
     /** If non-zero, this is the last unicode code point received if that was a combining character. */
     int mCombiningAccent;
+    /** Keys whose press was emitted by Ghostty and therefore require a release. */
+    private final Set<Long> mPressedKeys = new HashSet<>();
 
     /**
      * The current AutoFill type returned for {@link View#getAutofillType()} by {@link #getAutofillType()}.
@@ -327,6 +331,7 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         mTermSession = session;
         mTerminal = null;
         mCombiningAccent = 0;
+        mPressedKeys.clear();
         setMouseShape(GhosttyTerminal.MOUSE_SHAPE_TEXT);
 
         updateSize();
@@ -871,6 +876,12 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
             mClient.logInfo(LOG_TAG, "onKeyDown(keyCode=" + keyCode + ", isSystem()=" + event.isSystem() + ", event=" + event + ")");
+        long keyIdentity = keyIdentity(event);
+        boolean repeating = event.getRepeatCount() > 0;
+        if (!repeating) mPressedKeys.remove(keyIdentity);
+        int keyAction = repeating
+            ? GhosttyTerminal.KEY_ACTION_REPEAT
+            : GhosttyTerminal.KEY_ACTION_PRESS;
         if (mTerminal == null) return true;
         if (isSelectingText()) {
             stopTextSelectionMode();
@@ -879,7 +890,11 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         if (mClient.onKeyDown(keyCode, event, mTermSession)) {
             requestRender();
             return true;
-        } else if (event.isSystem() && (!mClient.shouldBackButtonBeMappedToEscape() || keyCode != KeyEvent.KEYCODE_BACK)) {
+        } else if (event.isSystem() &&
+                   keyCode != KeyEvent.KEYCODE_SYSRQ &&
+                   keyCode != KeyEvent.KEYCODE_BREAK &&
+                   (!mClient.shouldBackButtonBeMappedToEscape() ||
+                    keyCode != KeyEvent.KEYCODE_BACK)) {
             return super.onKeyDown(keyCode, event);
         } else if (event.getAction() == KeyEvent.ACTION_MULTIPLE && keyCode == KeyEvent.KEYCODE_UNKNOWN) {
             mTermSession.write(event.getCharacters());
@@ -888,7 +903,10 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
 
         final int metaState = event.getMetaState();
         final boolean controlDown = event.isCtrlPressed() || mClient.readControlKey();
-        final boolean leftAltDown = (metaState & KeyEvent.META_ALT_LEFT_ON) != 0 || mClient.readAltKey();
+        final boolean leftAltDownFromEvent =
+            (metaState & KeyEvent.META_ALT_LEFT_ON) != 0;
+        final boolean leftAltDown =
+            leftAltDownFromEvent || mClient.readAltKey();
         final boolean shiftDown = event.isShiftPressed() || mClient.readShiftKey();
         final boolean rightAltDownFromEvent = (metaState & KeyEvent.META_ALT_RIGHT_ON) != 0;
 
@@ -897,11 +915,6 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         if (event.isAltPressed() || leftAltDown) keyMod |= GhosttyTerminal.MOD_ALT;
         if (shiftDown) keyMod |= GhosttyTerminal.MOD_SHIFT;
         if (event.isNumLockOn()) keyMod |= GhosttyTerminal.MOD_NUM_LOCK;
-        // https://github.com/termux/termux-app/issues/731
-        if (!event.isFunctionPressed() && handleKeyCode(keyCode, keyMod)) {
-            if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) mClient.logInfo(LOG_TAG, "handleKeyCode() took key event");
-            return true;
-        }
 
         // Clear Ctrl since we handle that ourselves:
         int bitsToClear = KeyEvent.META_CTRL_MASK;
@@ -919,7 +932,18 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         int result = event.getUnicodeChar(effectiveMetaState);
         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
             mClient.logInfo(LOG_TAG, "KeyEvent#getUnicodeChar(" + effectiveMetaState + ") returned: " + result);
+        int unshiftedCodePoint = getUnshiftedCodePoint(event);
+
         if (result == 0) {
+            // Function keys generally do not have text. Give the terminal
+            // encoder the physical key before allowing Android to fall back.
+            if (!event.isFunctionPressed() &&
+                handleKeyCode(keyCode, keyAction, keyMod, 0, null,
+                    unshiftedCodePoint, false, event)) {
+                if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
+                    mClient.logInfo(LOG_TAG, "handleKeyCode() took key event");
+                return true;
+            }
             return false;
         }
 
@@ -935,10 +959,36 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
                 if (combinedChar > 0) result = combinedChar;
                 mCombiningAccent = 0;
             }
-            inputCodePoint(event.getDeviceId(), result, controlDown, leftAltDown);
         }
 
         if (mCombiningAccent != oldCombiningAccent) requestRender();
+
+        if ((result & KeyCharacterMap.COMBINING_ACCENT) != 0) {
+            mTerminal.sendKey(keyCode, keyAction,
+                keyMod, 0, null, unshiftedCodePoint, true);
+            return true;
+        }
+
+        if (result > 0 && mClient.onCodePoint(result, controlDown, mTermSession))
+            return true;
+
+        int terminalCodePoint = normalizeHardwareCodePoint(
+            event.getDeviceId(), result);
+        String text = printableText(terminalCodePoint);
+        int consumedModifiers = getConsumedModifiers(
+            event, effectiveMetaState, terminalCodePoint, shiftDown,
+            rightAltDownFromEvent && !leftAltDownFromEvent);
+
+        // https://github.com/termux/termux-app/issues/731
+        if (!event.isFunctionPressed() &&
+            handleKeyCode(keyCode, keyAction, keyMod, consumedModifiers, text,
+                unshiftedCodePoint, false, event)) {
+            if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
+                mClient.logInfo(LOG_TAG, "handleKeyCode() took key event");
+            return true;
+        }
+
+        writeCodePoint(event.getDeviceId(), result, controlDown, leftAltDown);
 
         return true;
     }
@@ -960,6 +1010,12 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         final boolean altDown = leftAltDownFromEvent || mClient.readAltKey();
 
         if (mClient.onCodePoint(codePoint, controlDown, mTermSession)) return;
+
+        writeCodePoint(eventSource, codePoint, controlDown, altDown);
+    }
+
+    private void writeCodePoint(int eventSource, int codePoint,
+                                boolean controlDown, boolean altDown) {
 
         if (controlDown) {
             if (codePoint >= 'a' && codePoint <= 'z') {
@@ -986,31 +1042,73 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         }
 
         if (codePoint > -1) {
-            // If not virtual or soft keyboard.
-            if (eventSource > KEY_EVENT_SOURCE_SOFT_KEYBOARD) {
-                // Work around bluetooth keyboards sending funny unicode characters instead
-                // of the more normal ones from ASCII that terminal programs expect - the
-                // desire to input the original characters should be low.
-                switch (codePoint) {
-                    case 0x02DC: // SMALL TILDE.
-                        codePoint = 0x007E; // TILDE (~).
-                        break;
-                    case 0x02CB: // MODIFIER LETTER GRAVE ACCENT.
-                        codePoint = 0x0060; // GRAVE ACCENT (`).
-                        break;
-                    case 0x02C6: // MODIFIER LETTER CIRCUMFLEX ACCENT.
-                        codePoint = 0x005E; // CIRCUMFLEX ACCENT (^).
-                        break;
-                }
-            }
-
+            codePoint = normalizeHardwareCodePoint(eventSource, codePoint);
             // If left alt, send escape before the code point to make e.g. Alt+B and Alt+F work in readline:
             mTermSession.writeCodePoint(altDown, codePoint);
         }
     }
 
+    private static int normalizeHardwareCodePoint(int eventSource, int codePoint) {
+        if (eventSource <= KEY_EVENT_SOURCE_SOFT_KEYBOARD) return codePoint;
+
+        // Work around bluetooth keyboards sending compatibility characters
+        // instead of the ASCII characters terminal programs expect.
+        switch (codePoint) {
+            case 0x02DC: return 0x007E; // SMALL TILDE -> TILDE (~).
+            case 0x02CB: return 0x0060; // MODIFIER LETTER GRAVE -> GRAVE (`).
+            case 0x02C6: return 0x005E; // MODIFIER CIRCUMFLEX -> (^).
+            default: return codePoint;
+        }
+    }
+
+    private static long keyIdentity(KeyEvent event) {
+        return ((long) event.getDeviceId() << 32) |
+            (event.getKeyCode() & 0xffffffffL);
+    }
+
+    private static int getUnshiftedCodePoint(KeyEvent event) {
+        int codePoint = event.getUnicodeChar(0);
+        if ((codePoint & KeyCharacterMap.COMBINING_ACCENT) != 0)
+            codePoint &= KeyCharacterMap.COMBINING_ACCENT_MASK;
+        return normalizeHardwareCodePoint(event.getDeviceId(), codePoint);
+    }
+
+    @Nullable
+    private static String printableText(int codePoint) {
+        return codePoint >= 0x20 && codePoint != 0x7f
+            ? new String(Character.toChars(codePoint))
+            : null;
+    }
+
+    private static int getConsumedModifiers(KeyEvent event,
+                                            int effectiveMetaState,
+                                            int codePoint,
+                                            boolean shiftDown,
+                                            boolean rightAltDown) {
+        int consumed = 0;
+        if (shiftDown && event.getUnicodeChar(effectiveMetaState &
+                ~KeyEvent.META_SHIFT_MASK) != codePoint) {
+            consumed |= GhosttyTerminal.MOD_SHIFT;
+        }
+        if (rightAltDown && event.getUnicodeChar(effectiveMetaState &
+                ~KeyEvent.META_ALT_MASK) != codePoint) {
+            consumed |= GhosttyTerminal.MOD_ALT;
+        }
+        return consumed;
+    }
+
     /** Input the specified keyCode if applicable and return if the input was consumed. */
     public boolean handleKeyCode(int keyCode, int keyMod) {
+        return handleKeyCode(keyCode, GhosttyTerminal.KEY_ACTION_PRESS, keyMod,
+            0, null, 0, false, null);
+    }
+
+    private boolean handleKeyCode(int keyCode, int keyAction, int keyMod,
+                                  int consumedModifiers,
+                                  @Nullable String text,
+                                  int unshiftedCodePoint,
+                                  boolean composing,
+                                  @Nullable KeyEvent event) {
         if (!mCursorVisible) {
             mCursorVisible = true;
             requestRender();
@@ -1018,9 +1116,19 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
 
         if (handleKeyCodeAction(keyCode, keyMod))
             return true;
+        if (keyAction == GhosttyTerminal.KEY_ACTION_REPEAT &&
+            (event == null || !mPressedKeys.contains(keyIdentity(event)))) {
+            return true;
+        }
 
-        return mTerminal.sendKey(keyCode, GhosttyTerminal.KEY_ACTION_PRESS,
-            keyMod, null, 0);
+        boolean forwarded = mTerminal.sendKey(
+            keyCode, keyAction,
+            keyMod, consumedModifiers, text, unshiftedCodePoint, composing);
+        if (forwarded && event != null &&
+            keyAction == GhosttyTerminal.KEY_ACTION_PRESS) {
+            mPressedKeys.add(keyIdentity(event));
+        }
+        return forwarded;
     }
 
     public boolean handleKeyCodeAction(int keyCode, int keyMod) {
@@ -1059,20 +1167,39 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         if (TERMINAL_VIEW_KEY_LOGGING_ENABLED)
             mClient.logInfo(LOG_TAG, "onKeyUp(keyCode=" + keyCode + ", event=" + event + ")");
 
+        boolean forwarded = mPressedKeys.remove(keyIdentity(event));
+
         // Do not return for KEYCODE_BACK and send it to the client since user may be trying
         // to exit the activity.
         if (mTerminal == null && keyCode != KeyEvent.KEYCODE_BACK) return true;
 
-        if (mClient.onKeyUp(keyCode, event)) {
-            requestRender();
-            return true;
-        } else if (event.isSystem()) {
+        boolean clientHandled = mClient.onKeyUp(keyCode, event);
+        if (clientHandled) requestRender();
+        if (!forwarded && clientHandled) return true;
+        if (!forwarded && event.isSystem() &&
+                   keyCode != KeyEvent.KEYCODE_SYSRQ &&
+                   keyCode != KeyEvent.KEYCODE_BREAK) {
             // Let system key events through.
             return super.onKeyUp(keyCode, event);
         }
+        if (!forwarded) return true;
 
+        int codePoint = event.getUnicodeChar(event.getMetaState() &
+            ~(KeyEvent.META_CTRL_MASK | KeyEvent.META_ALT_LEFT_ON));
+        int unshiftedCodePoint = getUnshiftedCodePoint(event);
+        int terminalCodePoint = normalizeHardwareCodePoint(
+            event.getDeviceId(), codePoint);
+        String text = (codePoint & KeyCharacterMap.COMBINING_ACCENT) == 0
+            ? printableText(terminalCodePoint)
+            : null;
+        int modifiers = toGhosttyModifiers(event);
+        boolean rightAltDown =
+            (event.getMetaState() & KeyEvent.META_ALT_RIGHT_ON) != 0;
+        int consumedModifiers = getConsumedModifiers(
+            event, event.getMetaState(), terminalCodePoint,
+            event.isShiftPressed(), rightAltDown);
         mTerminal.sendKey(keyCode, GhosttyTerminal.KEY_ACTION_RELEASE,
-            toGhosttyModifiers(event), null, 0);
+            modifiers, consumedModifiers, text, unshiftedCodePoint, false);
         return true;
     }
 

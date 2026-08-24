@@ -253,16 +253,27 @@ public final class GhosttyTerminal implements AutoCloseable {
     public synchronized void paste(String text) {
         long handle = getHandleIfOpen();
         if (handle != 0 && text != null && !text.isEmpty()) {
-            nativePaste(handle, text);
+            nativePaste(handle, text.getBytes(StandardCharsets.UTF_8));
         }
     }
 
     public synchronized boolean sendKey(int key, int action, int modifiers,
                                         @Nullable String text,
                                         int unshiftedCodePoint) {
+        return sendKey(key, action, modifiers, 0, text, unshiftedCodePoint,
+            false);
+    }
+
+    public synchronized boolean sendKey(int key, int action, int modifiers,
+                                        int consumedModifiers,
+                                        @Nullable String text,
+                                        int unshiftedCodePoint,
+                                        boolean composing) {
         long handle = getHandleIfOpen();
-        return handle != 0 && nativeSendKey(handle, key, action, modifiers, text,
-            unshiftedCodePoint);
+        return handle != 0 && nativeSendKey(handle, key, action, modifiers,
+            consumedModifiers,
+            text == null ? null : text.getBytes(StandardCharsets.UTF_8),
+            unshiftedCodePoint, composing);
     }
 
     public synchronized boolean sendMouse(int action, int button, int modifiers,
@@ -495,10 +506,13 @@ public final class GhosttyTerminal implements AutoCloseable {
     private static native void nativeSetKittyGraphicsOptions(long handle,
                                                              long storageLimit,
                                                              String tempDirectory);
-    private static native void nativePaste(long handle, String text);
+    private static native void nativePaste(long handle, byte[] text);
     private static native boolean nativeSendKey(long handle, int key, int action,
-                                                int modifiers, String text,
-                                                int unshiftedCodePoint);
+                                                int modifiers,
+                                                int consumedModifiers,
+                                                byte[] text,
+                                                int unshiftedCodePoint,
+                                                boolean composing);
     private static native boolean nativeSendMouse(long handle, int action,
                                                   int button, int modifiers,
                                                   float x, float y,
