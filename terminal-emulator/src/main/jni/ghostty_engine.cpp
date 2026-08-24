@@ -252,38 +252,33 @@ jstring new_java_string_from_utf8(JNIEnv *env, const std::string &value) {
         static_cast<jsize>(utf16.size()));
 }
 
-void title_changed(GhosttyTerminal terminal, void *userdata) {
-    auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
+void update_string_field(GhosttyTerminal terminal,
+                         TermuxGhosttyEngine *engine,
+                         GhosttyTerminalData data_type, char *&field) {
     try {
-        std::string new_title =
-            terminal_string(terminal, GHOSTTY_TERMINAL_DATA_TITLE);
-        char *copy = strdup(new_title.c_str());
+        std::string value = terminal_string(terminal, data_type);
+        char *copy = strdup(value.c_str());
         if (!copy) {
             engine->callback_allocation_failed = true;
             return;
         }
-        free(engine->title);
-        engine->title = copy;
+        free(field);
+        field = copy;
     } catch (const std::bad_alloc &) {
         engine->callback_allocation_failed = true;
     }
 }
 
+void title_changed(GhosttyTerminal terminal, void *userdata) {
+    auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
+    update_string_field(terminal, engine, GHOSTTY_TERMINAL_DATA_TITLE,
+                        engine->title);
+}
+
 void pwd_changed(GhosttyTerminal terminal, void *userdata) {
     auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
-    try {
-        std::string new_pwd =
-            terminal_string(terminal, GHOSTTY_TERMINAL_DATA_PWD);
-        char *copy = strdup(new_pwd.c_str());
-        if (!copy) {
-            engine->callback_allocation_failed = true;
-            return;
-        }
-        free(engine->pwd);
-        engine->pwd = copy;
-    } catch (const std::bad_alloc &) {
-        engine->callback_allocation_failed = true;
-    }
+    update_string_field(terminal, engine, GHOSTTY_TERMINAL_DATA_PWD,
+                        engine->pwd);
 }
 
 void desktop_notification(
@@ -507,7 +502,7 @@ GhosttyClipboardWriteResult clipboard_write(
                 if (bytes) env->DeleteLocalRef(bytes);
                 break;
             }
-            if (bytes && content.data.len > 0) {
+            if (content.data.len > 0) {
                 env->SetByteArrayRegion(
                     bytes, 0, static_cast<jsize>(content.data.len),
                     reinterpret_cast<const jbyte *>(content.data.ptr));

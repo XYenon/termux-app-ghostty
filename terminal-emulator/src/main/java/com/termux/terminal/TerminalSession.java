@@ -421,11 +421,9 @@ public final class TerminalSession extends TerminalOutput {
         try {
             final String cwdSymlink = String.format("/proc/%s/cwd/", mShellPid);
             String outputPath = new File(cwdSymlink).getCanonicalPath();
-            String outputPathWithTrailingSlash = outputPath;
-            if (!outputPath.endsWith("/")) {
-                outputPathWithTrailingSlash += '/';
-            }
-            if (!cwdSymlink.equals(outputPathWithTrailingSlash)) {
+            String withTrailingSlash = outputPath.endsWith("/")
+                ? outputPath : outputPath + '/';
+            if (!cwdSymlink.equals(withTrailingSlash)) {
                 return outputPath;
             }
         } catch (IOException | SecurityException e) {

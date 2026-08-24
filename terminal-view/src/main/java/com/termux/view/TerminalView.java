@@ -550,8 +550,8 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
 
     @Override
     protected int computeVerticalScrollOffset() {
-        return resolveVerticalScrollOffset(
-            mTerminal != null, mTerminal == null ? 0 : mTerminal.getViewportOffset());
+        GhosttyTerminal terminal = mTerminal;
+        return terminal != null ? Math.max(0, terminal.getViewportOffset()) : 1;
     }
 
     static int resolveVerticalScrollOffset(boolean hasTerminal, int viewportOffset) {
@@ -1180,11 +1180,11 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         if (!mSurfaceReady || mTerminal == null || mRenderExecutor.isShutdown()) return;
         mRenderDirty.set(true);
         if (!mRenderScheduled.compareAndSet(false, true)) return;
-        if (!mSurfaceReady || mTerminal == null || mRenderExecutor.isShutdown()) {
+        final GhosttyTerminal terminal = mTerminal;
+        if (terminal == null || !mSurfaceReady || mRenderExecutor.isShutdown()) {
             mRenderScheduled.set(false);
             return;
         }
-        final GhosttyTerminal terminal = mTerminal;
         final boolean cursorVisible = mCursorVisible;
         mRenderDirty.set(false);
         mRenderExecutor.execute(() -> {

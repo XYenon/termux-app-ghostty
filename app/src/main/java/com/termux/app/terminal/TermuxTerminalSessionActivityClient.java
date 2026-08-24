@@ -833,15 +833,13 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     }
 
     private static boolean isPlainTextMimeType(String mimeType) {
-        String normalized = normalizeMimeType(mimeType);
-        return ClipDescription.MIMETYPE_TEXT_PLAIN.equals(normalized) ||
-            "utf8_string".equals(normalized) || "text".equals(normalized) ||
-            "string".equals(normalized);
+        return ClipDescription.MIMETYPE_TEXT_PLAIN.equals(mimeType) ||
+            "utf8_string".equals(mimeType) || "text".equals(mimeType) ||
+            "string".equals(mimeType);
     }
 
     private static boolean isTextMimeType(String mimeType) {
-        String normalized = normalizeMimeType(mimeType);
-        return normalized.startsWith("text/") || isPlainTextMimeType(normalized);
+        return mimeType.startsWith("text/") || isPlainTextMimeType(mimeType);
     }
 
     private static boolean isStandardAndroidTextMimeType(String mimeType) {
