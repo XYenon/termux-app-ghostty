@@ -9,7 +9,12 @@
     public void onDesktopNotification(java.lang.String, java.lang.String);
     public void onProgressReport(int, int);
     public int onOscClipboard(int, java.lang.String, byte[], boolean);
+    public int onOscClipboard(int, java.lang.String[], byte[][], boolean);
+    public int onOscClipboardReadPermission(java.lang.String, boolean, boolean);
+    public java.lang.String[] onOscClipboardMimeTypes(int);
+    public byte[] onOscClipboardRead(int, java.lang.String);
     public byte[] onOscClipboardRead(int);
+    public void onOscClipboardReadComplete();
     public void onBell();
     public void onColorsChanged();
 }

@@ -20,11 +20,12 @@ struct TermuxGhosttyEngine {
     jmethodID desktop_notification_method;
     jmethodID progress_report_method;
     jmethodID clipboard_write_method;
+    jmethodID clipboard_permission_method;
+    jmethodID clipboard_mimes_method;
     jmethodID clipboard_read_method;
+    jmethodID clipboard_read_complete_method;
     jmethodID bell_method;
     jmethodID colors_method;
-    std::vector<uint8_t> clipboard_read_buffer;
-
     pthread_mutex_t mutex;
     GhosttyTerminal terminal;
     GhosttyKeyEncoder key_encoder;
@@ -42,6 +43,9 @@ struct TermuxGhosttyEngine {
     std::string pending_notification_title;
     std::string pending_notification_body;
     bool callback_allocation_failed;
+    bool pending_pty_writes_overflow;
+    size_t clipboard_read_bytes_remaining;
+    size_t clipboard_read_requests_remaining;
     bool pending_progress_report;
     int pending_progress_state;
     int pending_progress_value;

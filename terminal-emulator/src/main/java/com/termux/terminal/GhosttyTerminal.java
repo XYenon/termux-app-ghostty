@@ -86,6 +86,11 @@ public final class GhosttyTerminal implements AutoCloseable {
 
     private long mNativeHandle;
     private final Object mRendererLock = new Object();
+    private boolean mClipboardPromptActive;
+    private boolean mFeedActive;
+    private boolean mClosing;
+    private boolean mClosePending;
+    private int[] mPendingSize;
 
     public static int[] measureFont(int textSize, @Nullable String fontPath) {
         return nativeMeasureFont(textSize, fontPath);
@@ -102,16 +107,34 @@ public final class GhosttyTerminal implements AutoCloseable {
     }
 
     public synchronized long getNativeHandle() {
+        if (mClipboardPromptActive || mClosing)
+            throw new IllegalStateException("libghostty terminal is not available");
         return requireHandle();
     }
 
-    public synchronized void feed(byte[] data, int offset, int count) {
-        long handle = getHandleIfOpen();
-        if (handle != 0 && count > 0) nativeFeed(handle, data, offset, count);
+    public void feed(byte[] data, int offset, int count) {
+        long handle;
+        synchronized (this) {
+            if (mClosing || count <= 0) return;
+            if (mFeedActive)
+                throw new IllegalStateException("Concurrent terminal feeds are not supported");
+            handle = getHandleIfOpen();
+            if (handle == 0) return;
+            mFeedActive = true;
+        }
+        try {
+            nativeFeed(handle, data, offset, count);
+        } finally {
+            finishFeed();
+        }
     }
 
     public synchronized void resize(int columns, int rows, int cellWidthPixels,
                                     int cellHeightPixels) {
+        if (mClipboardPromptActive) {
+            mPendingSize = new int[]{columns, rows, cellWidthPixels, cellHeightPixels};
+            return;
+        }
         long handle = getHandleIfOpen();
         if (handle != 0) {
             nativeResize(handle, columns, rows, cellWidthPixels,
@@ -268,7 +291,9 @@ public final class GhosttyTerminal implements AutoCloseable {
 
     public void attachSurface(Surface surface, int width, int height,
                               int textSize, @Nullable String fontPath) {
+        waitForClipboardPrompt();
         synchronized (mRendererLock) {
+            waitForClipboardPrompt();
             long handle = getHandleIfOpen();
             if (handle == 0) return;
             nativeAttachSurface(handle, surface, width, height,
@@ -278,7 +303,9 @@ public final class GhosttyTerminal implements AutoCloseable {
 
     public void resizeSurface(int width, int height, int textSize,
                               @Nullable String fontPath) {
+        waitForClipboardPrompt();
         synchronized (mRendererLock) {
+            waitForClipboardPrompt();
             long handle = getHandleIfOpen();
             if (handle == 0) return;
             nativeResizeSurface(handle, width, height, textSize,
@@ -287,14 +314,18 @@ public final class GhosttyTerminal implements AutoCloseable {
     }
 
     public boolean render(boolean cursorVisible) {
+        waitForClipboardPrompt();
         synchronized (mRendererLock) {
+            waitForClipboardPrompt();
             long handle = getHandleIfOpen();
             return handle != 0 && nativeRender(handle, cursorVisible);
         }
     }
 
     public void detachSurface() {
+        waitForClipboardPrompt();
         synchronized (mRendererLock) {
+            waitForClipboardPrompt();
             long handle = getHandleIfOpen();
             if (handle != 0) nativeDetachSurface(handle);
         }
@@ -344,14 +375,70 @@ public final class GhosttyTerminal implements AutoCloseable {
 
     @Override
     public void close() {
+        synchronized (this) {
+            if (mNativeHandle == 0 || mClosing) return;
+            mClosing = true;
+            if (mFeedActive) {
+                mClosePending = true;
+                return;
+            }
+            if (mClipboardPromptActive) {
+                mClosePending = true;
+                return;
+            }
+        }
         synchronized (mRendererLock) {
             synchronized (this) {
+                if (mClipboardPromptActive) {
+                    mClosePending = true;
+                    return;
+                }
                 if (mNativeHandle != 0) {
                     nativeDestroy(mNativeHandle);
                     mNativeHandle = 0;
                 }
             }
         }
+    }
+
+    synchronized void beginClipboardPrompt() {
+        mClipboardPromptActive = true;
+    }
+
+    private void finishFeed() {
+        int[] size;
+        boolean close;
+        synchronized (this) {
+            mFeedActive = false;
+            mClipboardPromptActive = false;
+            notifyAll();
+            close = mClosePending;
+            mClosePending = false;
+            size = close ? null : mPendingSize;
+            mPendingSize = null;
+        }
+        if (close) destroyAfterFeed();
+        else {
+            if (size != null) resize(size[0], size[1], size[2], size[3]);
+        }
+    }
+
+    synchronized boolean isClipboardPromptActive() {
+        return mClipboardPromptActive;
+    }
+
+    private void waitForClipboardPrompt() {
+        boolean interrupted = false;
+        synchronized (this) {
+            while (mClipboardPromptActive) {
+                try {
+                    wait();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt();
     }
 
     @Override
@@ -371,7 +458,18 @@ public final class GhosttyTerminal implements AutoCloseable {
     }
 
     private synchronized long getHandleIfOpen() {
-        return mNativeHandle;
+        return mClipboardPromptActive || mClosing ? 0 : mNativeHandle;
+    }
+
+    private void destroyAfterFeed() {
+        synchronized (mRendererLock) {
+            synchronized (this) {
+                if (mNativeHandle != 0) {
+                    nativeDestroy(mNativeHandle);
+                    mNativeHandle = 0;
+                }
+            }
+        }
     }
 
     private static native long nativeCreate(TerminalOutput output, int columns,

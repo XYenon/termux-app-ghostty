@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_clipboard_read_permission">允许读取剪贴板？</string>
+    <string name="msg_clipboard_read_permission">某个终端程序想要读取 Android 剪贴板中的数据。</string>
+    <string name="action_clipboard_allow_once">仅允许一次</string>
+    <string name="action_clipboard_always_allow">始终允许此终端授权</string>
+    <string name="action_clipboard_deny">拒绝</string>
+</resources>

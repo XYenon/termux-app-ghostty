@@ -13,10 +13,12 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.AssetFileDescriptor;
 import android.content.res.ColorStateList;
 import android.net.Uri;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.widget.ListView;
 import android.widget.ProgressBar;
@@ -48,12 +50,20 @@ import java.io.FileInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 /** The {@link TerminalSessionClient} implementation that may require an {@link Activity} for its interface methods. */
 public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionClientBase {
@@ -63,6 +73,12 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     private static final int MAX_SESSIONS = 8;
 
     static final int MAX_OSC_CLIPBOARD_BYTES = 16 * 1024 * 1024;
+    private static final int MAX_OSC_CLIPBOARD_MIME_TYPES = 16;
+    private static final int MAX_OSC_CLIPBOARD_MIME_LENGTH = 256;
+    private static final int MAX_OSC_CLIPBOARD_URI_ITEMS = 1024;
+    private static final int CLIPBOARD_PERMISSION_DENIED = 0;
+    private static final int CLIPBOARD_PERMISSION_ONCE = 1;
+    private static final int CLIPBOARD_PERMISSION_ALWAYS = 2;
     private static final int MAX_OSC_NOTIFICATION_CHARS = 4096;
     private static final long OSC_NOTIFICATION_MIN_INTERVAL_MS = 1000;
     private static final long OSC_NOTIFICATION_DUPLICATE_INTERVAL_MS = 5000;
@@ -76,6 +92,12 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     private long mLastOscNotificationTime;
     private String mLastOscNotificationTitle;
     private String mLastOscNotificationBody;
+    private boolean mClipboardPermissionPromptShowing;
+    private AlertDialog mClipboardPermissionDialog;
+    private int[] mClipboardPermissionResult;
+    private TerminalSession mClipboardReadSession;
+    private ClipData mClipboardReadClip;
+    private Set<String> mClipboardReadMimeTypes;
     private final android.os.Handler mMainHandler =
         new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable mHideProgressRunnable;
@@ -133,6 +155,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
      * Should be called when mActivity.onStop() is called
      */
     public void onStop() {
+        denyPendingClipboardPermission();
         // Store current session in shared preferences so that it can be restored later in
         // {@link #onStart} if needed.
         setCurrentStoredSession();
@@ -324,8 +347,17 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     }
 
     @Override
+    @Deprecated
     public int onOscClipboard(@NonNull TerminalSession session, int location,
                               String mimeType, byte[] data, boolean clear) {
+        return onOscClipboard(session, location,
+            clear ? new String[0] : new String[]{mimeType},
+            clear ? new byte[0][] : new byte[][]{data}, clear);
+    }
+
+    @Override
+    public int onOscClipboard(@NonNull TerminalSession session, int location,
+                              String[] mimeTypes, byte[][] data, boolean clear) {
         if (!mActivity.isVisible() || mActivity.getCurrentSession() != session)
             return TerminalOutput.OSC_CLIPBOARD_RESULT_DENIED;
         if (location != 0) return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
@@ -339,26 +371,91 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
                 return TerminalOutput.OSC_CLIPBOARD_RESULT_SUCCESS;
             }
 
-            if (!isPlainTextMimeType(mimeType))
-                return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
-            if (data == null)
+            if (mimeTypes == null || data == null || mimeTypes.length != data.length)
                 return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
 
-            String text;
-            try {
-                text = StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(data))
-                    .toString();
-            } catch (CharacterCodingException e) {
-                return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
+            String plainText = null;
+            String htmlText = null;
+            String uriList = null;
+            String intentUri = null;
+            String fallbackText = null;
+            int totalBytes = 0;
+            Map<String, String> textRepresentations = new LinkedHashMap<>();
+            for (int i = 0; i < mimeTypes.length; i++) {
+                if (mimeTypes[i] == null || data[i] == null ||
+                    data[i].length > MAX_OSC_CLIPBOARD_BYTES - totalBytes)
+                    return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
+                if (mimeTypes[i].length() > MAX_OSC_CLIPBOARD_MIME_LENGTH)
+                    return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
+                totalBytes += data[i].length;
+                String normalized = normalizeMimeType(mimeTypes[i]);
+                if (!isTextMimeType(normalized))
+                    return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+                if (!isPlainTextMimeType(normalized) && !isConcreteMimeType(normalized))
+                    return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+                String value = decodeClipboardText(data[i]);
+                if (value == null) return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
+                String previous = textRepresentations.put(normalized, value);
+                if (previous != null && !previous.equals(value))
+                    return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+                if (isPlainTextMimeType(normalized)) {
+                    if (plainText != null && !plainText.equals(value))
+                        return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+                    plainText = value;
+                }
+                else if (ClipDescription.MIMETYPE_TEXT_HTML.equals(normalized)) htmlText = value;
+                else if (ClipDescription.MIMETYPE_TEXT_URILIST.equals(normalized)) uriList = value;
+                else if (ClipDescription.MIMETYPE_TEXT_INTENT.equals(normalized)) intentUri = value;
+                else if (fallbackText == null) fallbackText = value;
             }
-            if (text.indexOf('\0') >= 0)
-                return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
 
-            clipboard.setPrimaryClip(ClipData.newPlainText("OSC clipboard", text));
+            String text = plainText != null ? plainText : fallbackText;
+            if (text == null && htmlText != null)
+                text = android.text.Html.fromHtml(htmlText).toString();
+            for (Map.Entry<String, String> representation : textRepresentations.entrySet()) {
+                String type = representation.getKey();
+                if (!isStandardAndroidTextMimeType(type) &&
+                    (text == null || !text.equals(representation.getValue())))
+                    return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+            }
+
+            List<Uri> uris = uriList == null ? Collections.emptyList() : parseUriList(uriList);
+            if (uris == null) return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+            if (uriList != null && uris.isEmpty())
+                return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
+            Intent intent = intentUri == null ? null
+                : Intent.parseUri(intentUri, Intent.URI_INTENT_SCHEME);
+            Uri firstUri = uris.isEmpty() ? null : uris.get(0);
+            if (text == null && htmlText == null && intent == null && firstUri == null)
+                return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+
+            Set<String> representedTypes = new LinkedHashSet<>();
+            for (String type : textRepresentations.keySet()) {
+                if (!isPlainTextMimeType(type)) representedTypes.add(type);
+            }
+            if (text != null) representedTypes.add(ClipDescription.MIMETYPE_TEXT_PLAIN);
+            if (firstUri != null) {
+                representedTypes.add(ClipDescription.MIMETYPE_TEXT_URILIST);
+            }
+            if (representedTypes.size() > MAX_OSC_CLIPBOARD_MIME_TYPES)
+                return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+            if (firstUri != null) {
+                try {
+                    String uriType = mActivity.getContentResolver().getType(firstUri);
+                    addClipboardMimeType(representedTypes, uriType);
+                } catch (RuntimeException ignored) {
+                    // The URI list remains valid without optional provider metadata.
+                }
+            }
+            ClipData clip = new ClipData("OSC clipboard",
+                representedTypes.toArray(new String[0]),
+                new ClipData.Item(text, htmlText, intent, firstUri));
+            for (int i = 1; i < uris.size(); i++)
+                clip.addItem(new ClipData.Item(uris.get(i)));
+            clipboard.setPrimaryClip(clip);
             return TerminalOutput.OSC_CLIPBOARD_RESULT_SUCCESS;
+        } catch (URISyntaxException e) {
+            return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
         } catch (SecurityException e) {
             return TerminalOutput.OSC_CLIPBOARD_RESULT_DENIED;
         } catch (RuntimeException e) {
@@ -368,41 +465,222 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     }
 
     @Override
-    public byte[] onOscClipboardRead(@NonNull TerminalSession session, int location) {
-        if (!mActivity.isVisible() || mActivity.getCurrentSession() != session ||
-            location != 0) return null;
+    public int onOscClipboardReadPermission(@NonNull TerminalSession session,
+                                            String name, boolean granted,
+                                            boolean canRemember) {
+        if (!mActivity.isVisible() || mActivity.getCurrentSession() != session)
+            return CLIPBOARD_PERMISSION_DENIED;
+        if (granted) return CLIPBOARD_PERMISSION_ONCE;
+
+        return showClipboardPermissionDialog(canRemember);
+    }
+
+    @Override
+    public String[] onOscClipboardMimeTypes(@NonNull TerminalSession session, int location) {
+        if (!isCurrentClipboardSession(session, location)) return null;
+        mClipboardReadSession = null;
+        mClipboardReadClip = null;
+        mClipboardReadMimeTypes = null;
         ClipboardManager clipboard = (ClipboardManager)
             mActivity.getSystemService(Context.CLIPBOARD_SERVICE);
         if (clipboard == null) return null;
-
         try {
             ClipData clip = clipboard.getPrimaryClip();
-            if (clip == null || clip.getItemCount() == 0) return new byte[0];
+            ClipDescription description = clip == null ? null : clip.getDescription();
+            if (clip == null || description == null) return new String[0];
+            if (description.getMimeTypeCount() > MAX_OSC_CLIPBOARD_MIME_TYPES ||
+                clip.getItemCount() > MAX_OSC_CLIPBOARD_URI_ITEMS) return null;
+            Set<String> types = new LinkedHashSet<>();
+            boolean hasText = false;
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                if (clip.getItemAt(i).getText() != null) {
+                    hasText = true;
+                    break;
+                }
+            }
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                ClipData.Item item = clip.getItemAt(i);
+                if (item.getText() != null)
+                    if (!addClipboardMimeType(types, ClipDescription.MIMETYPE_TEXT_PLAIN)) return null;
+                if (item.getHtmlText() != null)
+                    if (!addClipboardMimeType(types, ClipDescription.MIMETYPE_TEXT_HTML) ||
+                        !addClipboardMimeType(types, ClipDescription.MIMETYPE_TEXT_PLAIN)) return null;
+                if (item.getUri() != null) {
+                    if (!addClipboardMimeType(types, ClipDescription.MIMETYPE_TEXT_URILIST) ||
+                        !addClipboardMimeType(types, ClipDescription.MIMETYPE_TEXT_PLAIN)) return null;
+                }
+                if (item.getIntent() != null) {
+                    if (!addClipboardMimeType(types, ClipDescription.MIMETYPE_TEXT_INTENT) ||
+                        !addClipboardMimeType(types, ClipDescription.MIMETYPE_TEXT_PLAIN)) return null;
+                }
+            }
+            if (hasText) {
+                for (int i = 0; i < description.getMimeTypeCount(); i++) {
+                    String type = normalizeMimeType(description.getMimeType(i));
+                    if (isTextMimeType(type) && !isStandardAndroidTextMimeType(type))
+                        addClipboardMimeType(types, type);
+                }
+            }
             ContentResolver resolver = mActivity.getContentResolver();
-            ClipData.Item item = clip.getItemAt(0);
-            CharSequence text = item.getText();
-            if (text != null) return encodeClipboardText(text);
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                Uri uri = clip.getItemAt(i).getUri();
+                if (uri == null) continue;
+                try {
+                    addClipboardMimeType(types, resolver.getType(uri));
+                } catch (RuntimeException ignored) {
+                }
+                try {
+                    String[] streamTypes = resolver.getStreamTypes(uri, "*/*");
+                    if (streamTypes == null ||
+                        streamTypes.length > MAX_OSC_CLIPBOARD_MIME_TYPES) continue;
+                    for (String streamType : streamTypes)
+                        addClipboardMimeType(types, streamType);
+                } catch (RuntimeException ignored) {
+                    // Inline representations remain available if the provider is unavailable.
+                }
+            }
+            mClipboardReadSession = session;
+            mClipboardReadClip = clip;
+            mClipboardReadMimeTypes = types;
+            return types.toArray(new String[0]);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
 
-            String html = item.getHtmlText();
-            if (html != null) return encodeClipboardText(html);
+    @Override
+    @Deprecated
+    public byte[] onOscClipboardRead(@NonNull TerminalSession session, int location) {
+        if (onOscClipboardMimeTypes(session, location) == null) return null;
+        try {
+            return onOscClipboardRead(session, location, ClipDescription.MIMETYPE_TEXT_PLAIN);
+        } finally {
+            onOscClipboardReadComplete(session);
+        }
+    }
 
-            Uri uri = item.getUri();
-            if (uri != null) {
-                String mimeType = resolver.getType(uri);
-                if (mimeType != null &&
-                    ClipDescription.compareMimeTypes(mimeType, "text/*")) {
+    @Override
+    public byte[] onOscClipboardRead(@NonNull TerminalSession session, int location,
+                                     String mimeType) {
+        if (!isCurrentClipboardSession(session, location) || mimeType == null) return null;
+        try {
+            ClipData clip = mClipboardReadSession == session ? mClipboardReadClip : null;
+            Set<String> availableTypes = mClipboardReadSession == session
+                ? mClipboardReadMimeTypes : null;
+            if (clip == null || availableTypes == null || clip.getItemCount() == 0) return null;
+            String normalized = normalizeMimeType(mimeType);
+            String advertisedType = isPlainTextMimeType(normalized)
+                ? ClipDescription.MIMETYPE_TEXT_PLAIN : normalized;
+            if (!availableTypes.contains(advertisedType)) return null;
+            ContentResolver resolver = mActivity.getContentResolver();
+            Exception uriReadFailure = null;
+            if (ClipDescription.MIMETYPE_TEXT_URILIST.equals(normalized)) {
+                if (clip.getItemCount() > MAX_OSC_CLIPBOARD_URI_ITEMS) return null;
+                StringBuilder uris = new StringBuilder();
+                for (int i = 0; i < clip.getItemCount() &&
+                        i < MAX_OSC_CLIPBOARD_URI_ITEMS; i++) {
+                    Uri uri = clip.getItemAt(i).getUri();
+                    if (uri == null) continue;
+                    if (uris.length() > 0) uris.append('\n');
+                    uris.append(uri);
+                    if (uris.length() > MAX_OSC_CLIPBOARD_BYTES) return null;
+                }
+                return uris.length() == 0 ? null : encodeClipboardText(uris);
+            }
+            for (int i = 0; i < clip.getItemCount() &&
+                    i < MAX_OSC_CLIPBOARD_URI_ITEMS; i++) {
+                ClipData.Item item = clip.getItemAt(i);
+                if (ClipDescription.MIMETYPE_TEXT_HTML.equals(normalized) &&
+                    item.getHtmlText() != null)
+                    return encodeClipboardText(item.getHtmlText());
+                if (ClipDescription.MIMETYPE_TEXT_INTENT.equals(normalized) &&
+                    item.getIntent() != null)
+                    return encodeClipboardText(
+                        item.getIntent().toUri(Intent.URI_INTENT_SCHEME));
+                Uri uri = item.getUri();
+                String uriMimeType = null;
+                try {
+                    if (uri != null) uriMimeType = resolver.getType(uri);
+                } catch (RuntimeException e) {
+                    uriReadFailure = e;
+                }
+                if (uri != null && uriMimeType != null &&
+                    ClipDescription.compareMimeTypes(
+                        normalizeMimeType(uriMimeType), normalized)) {
                     try (InputStream input = resolver.openInputStream(uri)) {
-                        if (input == null) return null;
-                        return readClipboardBytes(input);
+                        if (input != null) return readClipboardBytes(input);
+                    } catch (IOException e) {
+                        uriReadFailure = e;
+                    } catch (RuntimeException e) {
+                        uriReadFailure = e;
                     }
                 }
-                return encodeClipboardText(uri.toString());
+                if (uri != null) {
+                    String[] streamTypes;
+                    try {
+                        streamTypes = resolver.getStreamTypes(uri, normalized);
+                    } catch (RuntimeException e) {
+                        uriReadFailure = e;
+                        continue;
+                    }
+                    if (streamTypes == null) continue;
+                    if (streamTypes.length > MAX_OSC_CLIPBOARD_MIME_TYPES) continue;
+                    for (String streamType : streamTypes) {
+                        if (!ClipDescription.compareMimeTypes(
+                                normalizeMimeType(streamType), normalized)) continue;
+                        try (AssetFileDescriptor descriptor =
+                                 resolver.openTypedAssetFileDescriptor(uri, streamType, null)) {
+                            if (descriptor == null) continue;
+                            try (InputStream input = descriptor.createInputStream()) {
+                                return readClipboardBytes(input);
+                            }
+                        } catch (IOException e) {
+                            uriReadFailure = e;
+                        } catch (RuntimeException e) {
+                            uriReadFailure = e;
+                        }
+                    }
+                }
             }
-
-            Intent intent = item.getIntent();
-            return intent == null
-                ? new byte[0]
-                : encodeClipboardText(intent.toUri(Intent.URI_INTENT_SCHEME));
+            for (int i = 0; i < clip.getItemCount() &&
+                    i < MAX_OSC_CLIPBOARD_URI_ITEMS; i++) {
+                ClipData.Item item = clip.getItemAt(i);
+                if (isPlainTextMimeType(normalized)) {
+                    CharSequence text = item.getText();
+                    if (text != null) return encodeClipboardText(text);
+                    if (item.getHtmlText() != null)
+                        return encodeClipboardText(android.text.Html.fromHtml(item.getHtmlText()));
+                    Uri textUri = item.getUri();
+                    String textUriType = null;
+                    try {
+                        if (textUri != null) textUriType = resolver.getType(textUri);
+                    } catch (RuntimeException e) {
+                        uriReadFailure = e;
+                    }
+                    if (textUri != null && textUriType != null &&
+                        ClipDescription.compareMimeTypes(
+                            normalizeMimeType(textUriType), "text/*")) {
+                        try (InputStream input = resolver.openInputStream(textUri)) {
+                            if (input != null) return readClipboardBytes(input);
+                        } catch (IOException e) {
+                            uriReadFailure = e;
+                        } catch (RuntimeException e) {
+                            uriReadFailure = e;
+                        }
+                    }
+                    if (textUri != null) return encodeClipboardText(textUri.toString());
+                    Intent intent = item.getIntent();
+                    if (intent != null)
+                        return encodeClipboardText(intent.toUri(Intent.URI_INTENT_SCHEME));
+                }
+                if (isTextMimeType(normalized) &&
+                    !isStandardAndroidTextMimeType(normalized) && item.getText() != null)
+                    return encodeClipboardText(item.getText());
+            }
+            if (uriReadFailure != null)
+                Logger.logStackTraceWithMessage(
+                    LOG_TAG, "Failed to read an OSC clipboard URI", uriReadFailure);
+            return null;
         } catch (IOException e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read OSC clipboard", e);
             return null;
@@ -411,6 +689,116 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         } catch (RuntimeException e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read OSC clipboard", e);
             return null;
+        }
+    }
+
+    @Override
+    public void onOscClipboardReadComplete(@NonNull TerminalSession session) {
+        if (mClipboardReadSession == session) {
+            mClipboardReadSession = null;
+            mClipboardReadClip = null;
+            mClipboardReadMimeTypes = null;
+        }
+    }
+
+    private boolean isCurrentClipboardSession(TerminalSession session, int location) {
+        return mActivity.isVisible() && mActivity.getCurrentSession() == session && location == 0;
+    }
+
+    @Nullable
+    private static List<Uri> parseUriList(String uriList) {
+        List<Uri> uris = new ArrayList<>();
+        int start = 0;
+        while (start <= uriList.length()) {
+            int end = uriList.indexOf('\n', start);
+            if (end < 0) end = uriList.length();
+            int contentStart = start;
+            int contentEnd = end;
+            while (contentStart < contentEnd && uriList.charAt(contentStart) <= ' ')
+                contentStart++;
+            while (contentEnd > contentStart && uriList.charAt(contentEnd - 1) <= ' ')
+                contentEnd--;
+            if (contentStart < contentEnd && uriList.charAt(contentStart) != '#') {
+                if (uris.size() >= MAX_OSC_CLIPBOARD_URI_ITEMS) return null;
+                uris.add(Uri.parse(uriList.substring(contentStart, contentEnd)));
+            }
+            if (end == uriList.length()) break;
+            start = end + 1;
+        }
+        return uris;
+    }
+
+    @Nullable
+    private static String decodeClipboardText(byte[] data) {
+        try {
+            String text = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(data)).toString();
+            return text.indexOf('\0') < 0 ? text : null;
+        } catch (CharacterCodingException e) {
+            return null;
+        }
+    }
+
+    private int showClipboardPermissionDialog(boolean canRemember) {
+        if (Looper.myLooper() != Looper.getMainLooper() ||
+            mClipboardPermissionPromptShowing) return CLIPBOARD_PERMISSION_DENIED;
+        final int[] result = {CLIPBOARD_PERMISSION_DENIED};
+        AlertDialog.Builder builder = new AlertDialog.Builder(mActivity)
+            .setTitle(R.string.title_clipboard_read_permission)
+            .setMessage(R.string.msg_clipboard_read_permission)
+            .setPositiveButton(R.string.action_clipboard_allow_once, null)
+            .setNegativeButton(R.string.action_clipboard_deny, null);
+        if (canRemember)
+            builder.setNeutralButton(R.string.action_clipboard_always_allow, null);
+        AlertDialog dialog = builder.create();
+        dialog.show();
+        mClipboardPermissionPromptShowing = true;
+        mClipboardPermissionDialog = dialog;
+        mClipboardPermissionResult = result;
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(
+            view -> finishClipboardPermission(dialog, result, CLIPBOARD_PERMISSION_ONCE));
+        if (canRemember)
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(
+                view -> finishClipboardPermission(dialog, result, CLIPBOARD_PERMISSION_ALWAYS));
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(
+            view -> finishClipboardPermission(dialog, result, CLIPBOARD_PERMISSION_DENIED));
+        dialog.setOnCancelListener(
+            ignored -> finishClipboardPermission(dialog, result, CLIPBOARD_PERMISSION_DENIED));
+        try {
+            Looper.loop();
+        } catch (ClipboardPermissionResolved expected) {
+            // The clipboard callback is synchronous, so pump the main looper until the user responds.
+        } finally {
+            mClipboardPermissionPromptShowing = false;
+            mClipboardPermissionDialog = null;
+            mClipboardPermissionResult = null;
+        }
+        return result[0];
+    }
+
+    private void denyPendingClipboardPermission() {
+        AlertDialog dialog = mClipboardPermissionDialog;
+        int[] result = mClipboardPermissionResult;
+        if (dialog == null || result == null) return;
+        mMainHandler.post(() -> {
+            if (mClipboardPermissionDialog == dialog)
+                finishClipboardPermission(dialog, result, CLIPBOARD_PERMISSION_DENIED);
+        });
+    }
+
+    private void finishClipboardPermission(AlertDialog dialog, int[] result, int value) {
+        if (mClipboardPermissionDialog != dialog) return;
+        result[0] = value;
+        dialog.dismiss();
+        throw new ClipboardPermissionResolved();
+    }
+
+    private static final class ClipboardPermissionResolved extends RuntimeException {
+        @Override
+        public synchronized Throwable fillInStackTrace() {
+            return this;
         }
     }
 
@@ -445,10 +833,57 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     }
 
     private static boolean isPlainTextMimeType(String mimeType) {
-        if (mimeType == null) return false;
+        String normalized = normalizeMimeType(mimeType);
+        return ClipDescription.MIMETYPE_TEXT_PLAIN.equals(normalized) ||
+            "utf8_string".equals(normalized) || "text".equals(normalized) ||
+            "string".equals(normalized);
+    }
+
+    private static boolean isTextMimeType(String mimeType) {
+        String normalized = normalizeMimeType(mimeType);
+        return normalized.startsWith("text/") || isPlainTextMimeType(normalized);
+    }
+
+    private static boolean isStandardAndroidTextMimeType(String mimeType) {
+        return isPlainTextMimeType(mimeType) ||
+            ClipDescription.MIMETYPE_TEXT_HTML.equals(mimeType) ||
+            ClipDescription.MIMETYPE_TEXT_URILIST.equals(mimeType) ||
+            ClipDescription.MIMETYPE_TEXT_INTENT.equals(mimeType);
+    }
+
+    private static boolean addClipboardMimeType(Set<String> types, String mimeType) {
+        if (mimeType == null) return true;
+        if (mimeType.length() > MAX_OSC_CLIPBOARD_MIME_LENGTH) return false;
+        for (int i = 0; i < mimeType.length(); i++) {
+            if (Character.isWhitespace(mimeType.charAt(i))) return false;
+        }
+        String normalized = normalizeMimeType(mimeType);
+        if (!isConcreteMimeType(normalized))
+            return false;
+        if (types.contains(normalized)) return true;
+        if (types.size() >= MAX_OSC_CLIPBOARD_MIME_TYPES) return false;
+        types.add(normalized);
+        return true;
+    }
+
+    private static boolean isConcreteMimeType(String mimeType) {
+        int slash = mimeType.indexOf('/');
+        if (slash <= 0 || slash != mimeType.lastIndexOf('/') ||
+            slash == mimeType.length() - 1) return false;
+        for (int i = 0; i < mimeType.length(); i++) {
+            if (i == slash) continue;
+            char character = mimeType.charAt(i);
+            if (character < 0x21 || character > 0x7e || character == '*' ||
+                "()<>@,;:\\\"/[]?=".indexOf(character) >= 0) return false;
+        }
+        return true;
+    }
+
+    private static String normalizeMimeType(String mimeType) {
+        if (mimeType == null) return "";
         String normalized = mimeType.toLowerCase(Locale.ROOT).replaceAll("\\s", "");
-        return "text/plain".equals(normalized) ||
-            "text/plain;charset=utf-8".equals(normalized);
+        int parameters = normalized.indexOf(';');
+        return parameters < 0 ? normalized : normalized.substring(0, parameters);
     }
 
     @Override
@@ -556,6 +991,11 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     /** Try switching to session. */
     public void setCurrentSession(TerminalSession session) {
         if (session == null) return;
+        if (mActivity.getCurrentSession() != session && mClipboardPermissionDialog != null) {
+            denyPendingClipboardPermission();
+            mMainHandler.post(() -> setCurrentSession(session));
+            return;
+        }
 
         if (mActivity.getTerminalView().attachSession(session)) {
             mMainHandler.removeCallbacks(mHideProgressRunnable);

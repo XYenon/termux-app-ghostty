@@ -71,7 +71,8 @@ public final class TerminalSession extends TerminalOutput {
      * The file descriptor referencing the master half of a pseudo-terminal pair, resulting from calling
      * {@link JNI#createSubprocess(String, String, String[], String[], int[], int, int, int, int)}.
      */
-    private int mTerminalFileDescriptor;
+    private int mTerminalFileDescriptor = -1;
+    private Integer mDeferredProcessExitStatus;
 
     /** Set by the application for user identification of session, not by terminal. */
     public String mSessionName;
@@ -292,15 +293,18 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Cleanup resources when the process exits. */
     void cleanupResources(int exitStatus) {
+        int terminalFileDescriptor;
         synchronized (this) {
             mShellPid = -1;
             mShellExitStatus = exitStatus;
+            terminalFileDescriptor = mTerminalFileDescriptor;
+            mTerminalFileDescriptor = -1;
         }
 
         // Stop the reader and writer threads, and close the I/O streams
         mTerminalToProcessIOQueue.close();
         mProcessToTerminalIOQueue.close();
-        JNI.close(mTerminalFileDescriptor);
+        if (terminalFileDescriptor >= 0) JNI.close(terminalFileDescriptor);
     }
 
     @Override
@@ -343,13 +347,45 @@ public final class TerminalSession extends TerminalOutput {
     }
 
     @Override
+    @Deprecated
     public int onOscClipboard(int location, String mimeType, byte[] data, boolean clear) {
         return mClient.onOscClipboard(this, location, mimeType, data, clear);
     }
 
     @Override
+    public int onOscClipboard(int location, String[] mimeTypes, byte[][] data, boolean clear) {
+        return mClient.onOscClipboard(this, location, mimeTypes, data, clear);
+    }
+
+    @Override
+    public int onOscClipboardReadPermission(String name, boolean granted,
+                                            boolean canRemember) {
+        GhosttyTerminal terminal = mTerminal;
+        if (terminal == null) return 0;
+        terminal.beginClipboardPrompt();
+        return mClient.onOscClipboardReadPermission(
+            this, name, granted, canRemember);
+    }
+
+    @Override
+    public String[] onOscClipboardMimeTypes(int location) {
+        return mClient.onOscClipboardMimeTypes(this, location);
+    }
+
+    @Override
+    @Deprecated
     public byte[] onOscClipboardRead(int location) {
         return mClient.onOscClipboardRead(this, location);
+    }
+
+    @Override
+    public byte[] onOscClipboardRead(int location, String mimeType) {
+        return mClient.onOscClipboardRead(this, location, mimeType);
+    }
+
+    @Override
+    public void onOscClipboardReadComplete() {
+        mClient.onOscClipboardReadComplete(this);
     }
 
     @Override
@@ -444,10 +480,23 @@ public final class TerminalSession extends TerminalOutput {
 
         @Override
         public void handleMessage(Message msg) {
+            GhosttyTerminal terminal = mTerminal;
+            if (terminal != null && terminal.isClipboardPromptActive()) {
+                if (msg.what == MSG_PROCESS_EXITED)
+                    mDeferredProcessExitStatus = (Integer) msg.obj;
+                return;
+            }
             int bytesRead = mProcessToTerminalIOQueue.read(mReceiveBuffer, false);
             if (bytesRead > 0) {
                 mTerminal.feed(mReceiveBuffer, 0, bytesRead);
                 notifyScreenUpdate();
+            }
+
+            Integer deferredExit = mDeferredProcessExitStatus;
+            mDeferredProcessExitStatus = null;
+            if (deferredExit != null) {
+                Message message = obtainMessage(MSG_PROCESS_EXITED, deferredExit);
+                message.sendToTarget();
             }
 
             mProcessInputPending.set(false);

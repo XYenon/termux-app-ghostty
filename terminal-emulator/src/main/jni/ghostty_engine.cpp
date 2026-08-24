@@ -74,6 +74,15 @@ void write_pty(GhosttyTerminal, void *userdata, const uint8_t *data,
                size_t length) {
     auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
     if (engine->pending_pty_writes) {
+        constexpr size_t kMaxPendingPtyWriteBytes = 32 * 1024 * 1024;
+        if (engine->pending_pty_writes_overflow) return;
+        if (length > kMaxPendingPtyWriteBytes -
+                std::min(kMaxPendingPtyWriteBytes,
+                         engine->pending_pty_writes->size())) {
+            engine->pending_pty_writes->clear();
+            engine->pending_pty_writes_overflow = true;
+            return;
+        }
         // Reentrant call while the engine mutex is held: defer the write so we
         // do not call back into Java (which may block on a full PTY queue)
         // while holding the lock and stalling the render thread.
@@ -398,80 +407,142 @@ void notify_progress_report(TermuxGhosttyEngine *engine, int state,
     release_env(engine, attached);
 }
 
-bool is_plain_text_mime(const GhosttyString &mime) {
-    char normalized[25];
-    size_t length = 0;
-    for (size_t i = 0; i < mime.len; ++i) {
-        unsigned char ch = mime.ptr[i];
-        if (std::isspace(ch)) continue;
-        if (length + 1 >= sizeof(normalized)) return false;
-        normalized[length++] = static_cast<char>(std::tolower(ch));
-    }
-    normalized[length] = '\0';
-    return strcmp(normalized, "text/plain") == 0 ||
-        strcmp(normalized, "text/plain;charset=utf-8") == 0;
+std::string ghostty_string(const GhosttyString &value) {
+    if (!value.ptr || value.len == 0) return {};
+    return {reinterpret_cast<const char *>(value.ptr), value.len};
 }
 
 GhosttyClipboardWriteResult clipboard_write(
     GhosttyTerminal, void *userdata, const GhosttyClipboardWrite *write) {
+    constexpr size_t kMaxClipboardBytes = 16 * 1024 * 1024;
+    constexpr size_t kMaxClipboardRepresentations = 1024;
+    constexpr size_t kMaxMimeBytes = 256;
     auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
-    if (!write) return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+    if (!write || write->size < sizeof(GhosttyClipboardWrite))
+        return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
     if (write->contents_len > 0 && !write->contents) {
         return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
     }
 
-    const GhosttyClipboardContent *selected = nullptr;
+    if (write->contents_len > kMaxClipboardRepresentations ||
+        write->contents_len > INT_MAX)
+        return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+    size_t total_bytes = 0;
     for (size_t i = 0; i < write->contents_len; ++i) {
         const auto &content = write->contents[i];
         if ((content.mime.len > 0 && !content.mime.ptr) ||
             (content.data.len > 0 && !content.data.ptr)) {
             return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
         }
-        if (content.mime.len == 0) continue;
-        if (is_plain_text_mime(content.mime)) {
-            selected = &content;
-            break;
+        if (content.mime.len == 0 || content.mime.len > kMaxMimeBytes ||
+            content.data.len > INT_MAX)
+            return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+        if (content.data.len > kMaxClipboardBytes - total_bytes)
+            return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+        total_bytes += content.data.len;
+        const auto *mime = static_cast<const uint8_t *>(content.mime.ptr);
+        for (size_t j = 0; j < content.mime.len; ++j) {
+            if (mime[j] < 0x21 || mime[j] > 0x7e)
+                return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
         }
-    }
-    if (write->contents_len > 0 && !selected) {
-        return GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED;
-    }
-    if (selected && (selected->mime.len > INT_MAX ||
-                     selected->data.len > INT_MAX)) {
-        return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
     }
 
     bool attached;
     JNIEnv *env = get_env(engine, &attached);
     if (!env) return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
 
-    jstring mime = nullptr;
-    jbyteArray data = nullptr;
-    if (selected) {
-        mime = env->NewStringUTF("text/plain");
-        data = env->NewByteArray(static_cast<jsize>(selected->data.len));
-        if (data && selected->data.len > 0) {
-            env->SetByteArrayRegion(
-                data, 0, static_cast<jsize>(selected->data.len),
-                reinterpret_cast<const jbyte *>(selected->data.ptr));
-        }
-    }
-    if (selected && (!mime || !data || env->ExceptionCheck())) {
+    jclass string_class = nullptr;
+    jclass bytes_class = nullptr;
+    jobjectArray mimes = nullptr;
+    jobjectArray data = nullptr;
+    bool item_allocation_failed = false;
+    auto cleanup_allocations = [&]() {
         clear_java_exception(env, "clipboard allocation");
-        if (mime) env->DeleteLocalRef(mime);
+        if (string_class) env->DeleteLocalRef(string_class);
+        if (bytes_class) env->DeleteLocalRef(bytes_class);
+        if (mimes) env->DeleteLocalRef(mimes);
         if (data) env->DeleteLocalRef(data);
+    };
+
+    string_class = env->FindClass("java/lang/String");
+    if (!string_class || env->ExceptionCheck()) {
+        cleanup_allocations();
+        release_env(engine, attached);
+        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+    }
+    bytes_class = env->FindClass("[B");
+    if (!bytes_class || env->ExceptionCheck()) {
+        cleanup_allocations();
+        release_env(engine, attached);
+        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+    }
+    mimes = env->NewObjectArray(
+        static_cast<jsize>(write->contents_len), string_class, nullptr);
+    if (!mimes || env->ExceptionCheck()) {
+        cleanup_allocations();
+        release_env(engine, attached);
+        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+    }
+    data = env->NewObjectArray(
+        static_cast<jsize>(write->contents_len), bytes_class, nullptr);
+    if (!data || env->ExceptionCheck()) {
+        cleanup_allocations();
+        release_env(engine, attached);
+        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+    }
+    try {
+        for (size_t i = 0; i < write->contents_len; ++i) {
+            const auto &content = write->contents[i];
+            std::string mime_value = ghostty_string(content.mime);
+            jstring mime = env->NewStringUTF(mime_value.c_str());
+            if (!mime || env->ExceptionCheck()) {
+                item_allocation_failed = true;
+                if (mime) env->DeleteLocalRef(mime);
+                break;
+            }
+            jbyteArray bytes = env->NewByteArray(static_cast<jsize>(content.data.len));
+            if (!bytes || env->ExceptionCheck()) {
+                item_allocation_failed = true;
+                env->DeleteLocalRef(mime);
+                if (bytes) env->DeleteLocalRef(bytes);
+                break;
+            }
+            if (bytes && content.data.len > 0) {
+                env->SetByteArrayRegion(
+                    bytes, 0, static_cast<jsize>(content.data.len),
+                    reinterpret_cast<const jbyte *>(content.data.ptr));
+            }
+            if (!env->ExceptionCheck()) {
+                env->SetObjectArrayElement(mimes, static_cast<jsize>(i), mime);
+            }
+            if (!env->ExceptionCheck()) {
+                env->SetObjectArrayElement(data, static_cast<jsize>(i), bytes);
+            }
+            env->DeleteLocalRef(mime);
+            env->DeleteLocalRef(bytes);
+            if (env->ExceptionCheck()) break;
+        }
+    } catch (const std::bad_alloc &) {
+        cleanup_allocations();
+        release_env(engine, attached);
+        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+    }
+    if (item_allocation_failed || env->ExceptionCheck()) {
+        cleanup_allocations();
         release_env(engine, attached);
         return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
     }
 
     jint result = env->CallIntMethod(
         engine->output, engine->clipboard_write_method,
-        static_cast<jint>(write->location), mime, data,
+        static_cast<jint>(write->location), mimes, data,
         static_cast<jboolean>(write->contents_len == 0));
     bool failed = env->ExceptionCheck();
     clear_java_exception(env, "clipboard callback");
-    if (mime) env->DeleteLocalRef(mime);
-    if (data) env->DeleteLocalRef(data);
+    env->DeleteLocalRef(string_class);
+    env->DeleteLocalRef(bytes_class);
+    env->DeleteLocalRef(mimes);
+    env->DeleteLocalRef(data);
     release_env(engine, attached);
     if (failed || result < GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS ||
         result > GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR) {
@@ -483,37 +554,57 @@ GhosttyClipboardWriteResult clipboard_write(
 void clipboard_read(GhosttyTerminal, void *userdata,
                     const GhosttyClipboardRead *read) {
     auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
-    if (!read || !read->reply) return;
+    if (!read || read->size < sizeof(GhosttyClipboardRead) || !read->reply) return;
 
     GhosttyClipboardReadReply reply{};
     reply.size = sizeof(reply);
     reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_DENIED;
 
-    const GhosttyString *requested_mime = nullptr;
-    for (size_t i = 0; i < read->mimes_len; ++i) {
-        if (is_plain_text_mime(read->mimes[i])) {
-            requested_mime = &read->mimes[i];
-            break;
-        }
-    }
-    if (!requested_mime && !read->list) {
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS;
-        read->reply(read, &reply);
-        return;
-    }
+    constexpr size_t kMaxClipboardBytes = 16 * 1024 * 1024;
+    constexpr size_t kMaxRequestedMimes = 4;
+    constexpr jsize kMaxAvailableMimes = 16;
+    constexpr size_t kMaxMimeBytes = 256;
 
-    static constexpr uint8_t mime_data[] = "text/plain";
-    const GhosttyString mime{mime_data, sizeof(mime_data) - 1};
-    if (!requested_mime) {
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS;
-        reply.available = &mime;
-        reply.available_len = 1;
+    if (read->location != GHOSTTY_CLIPBOARD_LOCATION_STANDARD) {
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_UNSUPPORTED;
         read->reply(read, &reply);
         return;
     }
-    if (!read->granted) {
+    if (read->mimes_len == 0 && !read->list) {
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS;
         read->reply(read, &reply);
         return;
+    }
+    if (engine->clipboard_read_requests_remaining == 0 ||
+        engine->clipboard_read_bytes_remaining == 0) {
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
+        read->reply(read, &reply);
+        return;
+    }
+    --engine->clipboard_read_requests_remaining;
+    if (read->mimes_len > kMaxRequestedMimes ||
+        (read->mimes_len > 0 && !read->mimes) ||
+        read->name.len > kMaxMimeBytes ||
+        (read->name.len > 0 && !read->name.ptr)) {
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
+        read->reply(read, &reply);
+        return;
+    }
+    for (size_t i = 0; i < read->mimes_len; ++i) {
+        if (!read->mimes[i].ptr || read->mimes[i].len == 0 ||
+            read->mimes[i].len > kMaxMimeBytes) {
+            reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
+            read->reply(read, &reply);
+            return;
+        }
+        const auto *mime = static_cast<const uint8_t *>(read->mimes[i].ptr);
+        for (size_t j = 0; j < read->mimes[i].len; ++j) {
+            if (mime[j] < 0x21 || mime[j] > 0x7e) {
+                reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
+                read->reply(read, &reply);
+                return;
+            }
+        }
     }
 
     bool attached;
@@ -523,50 +614,151 @@ void clipboard_read(GhosttyTerminal, void *userdata,
         read->reply(read, &reply);
         return;
     }
-    auto data = static_cast<jbyteArray>(env->CallObjectMethod(
-        engine->output, engine->clipboard_read_method,
-        static_cast<jint>(read->location)));
-    if (env->ExceptionCheck() || !data) {
-        clear_java_exception(env, "clipboard read callback");
-        if (data) env->DeleteLocalRef(data);
-        release_env(engine, attached);
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_DENIED;
-        read->reply(read, &reply);
-        return;
-    }
-
-    const jsize length = env->GetArrayLength(data);
+    jint permission = 1;
     try {
-        engine->clipboard_read_buffer.resize(static_cast<size_t>(length));
+        if (read->mimes_len > 0 || read->list) {
+            std::string name_value = ghostty_string(read->name);
+            jstring name = new_java_string_from_utf8(env, name_value);
+            if (!name || env->ExceptionCheck()) {
+                if (name) env->DeleteLocalRef(name);
+                clear_java_exception(env, "clipboard permission allocation");
+                release_env(engine, attached);
+                reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
+                read->reply(read, &reply);
+                return;
+            }
+            permission = env->CallIntMethod(
+                engine->output, engine->clipboard_permission_method, name,
+                static_cast<jboolean>(read->granted),
+                static_cast<jboolean>(read->can_remember));
+            if (name) env->DeleteLocalRef(name);
+            if (env->ExceptionCheck() || permission <= 0) {
+                clear_java_exception(env, "clipboard permission callback");
+                release_env(engine, attached);
+                read->reply(read, &reply);
+                return;
+            }
+        }
     } catch (const std::bad_alloc &) {
-        env->DeleteLocalRef(data);
+        clear_java_exception(env, "clipboard permission allocation");
         release_env(engine, attached);
         reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
         read->reply(read, &reply);
         return;
     }
-    if (length > 0) {
-        env->GetByteArrayRegion(
-            data, 0, length,
-            reinterpret_cast<jbyte *>(engine->clipboard_read_buffer.data()));
+
+    auto java_mimes = static_cast<jobjectArray>(env->CallObjectMethod(
+        engine->output, engine->clipboard_mimes_method,
+        static_cast<jint>(read->location)));
+    if (env->ExceptionCheck() || !java_mimes) {
+        clear_java_exception(env, "clipboard MIME callback");
+        if (java_mimes) env->DeleteLocalRef(java_mimes);
+        env->CallVoidMethod(engine->output, engine->clipboard_read_complete_method);
+        clear_java_exception(env, "clipboard read completion");
+        release_env(engine, attached);
+        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
+        read->reply(read, &reply);
+        return;
     }
-    bool failed = env->ExceptionCheck();
+
+    std::vector<std::string> available_strings;
+    std::vector<GhosttyString> available;
+    std::vector<std::vector<uint8_t>> buffers;
+    std::vector<GhosttyClipboardContent> contents;
+    bool failed = false;
+    size_t total_bytes = 0;
+    static constexpr uint8_t kEmptyClipboardData = 0;
+    try {
+        jsize available_len = env->GetArrayLength(java_mimes);
+        if (available_len < 0 || available_len > kMaxAvailableMimes) failed = true;
+        if (!failed && read->list) {
+            available_strings.reserve(static_cast<size_t>(available_len));
+            for (jsize i = 0; i < available_len && !failed; ++i) {
+                auto mime = static_cast<jstring>(
+                    env->GetObjectArrayElement(java_mimes, i));
+                const char *chars = mime
+                    ? env->GetStringUTFChars(mime, nullptr) : nullptr;
+                size_t length = chars ? strlen(chars) : 0;
+                const size_t request_budget = std::min(
+                    kMaxClipboardBytes, engine->clipboard_read_bytes_remaining);
+                if (!chars || env->ExceptionCheck() || length == 0 ||
+                    length > kMaxMimeBytes || length > request_budget - total_bytes) {
+                    failed = true;
+                } else {
+                    available_strings.emplace_back(chars, length);
+                    total_bytes += length;
+                }
+                if (chars) env->ReleaseStringUTFChars(mime, chars);
+                if (mime) env->DeleteLocalRef(mime);
+            }
+        }
+        available.reserve(available_strings.size());
+        for (const auto &mime : available_strings)
+            available.push_back({reinterpret_cast<const uint8_t *>(mime.data()), mime.size()});
+
+        buffers.reserve(read->mimes_len);
+        contents.reserve(read->mimes_len);
+        for (size_t i = 0; i < read->mimes_len && !failed; ++i) {
+            std::string mime_value = ghostty_string(read->mimes[i]);
+            jstring mime = env->NewStringUTF(mime_value.c_str());
+            if (!mime || env->ExceptionCheck()) {
+                if (mime) env->DeleteLocalRef(mime);
+                failed = true;
+                break;
+            }
+            auto bytes = static_cast<jbyteArray>(env->CallObjectMethod(
+                engine->output, engine->clipboard_read_method,
+                static_cast<jint>(read->location), mime));
+            if (mime) env->DeleteLocalRef(mime);
+            if (env->ExceptionCheck()) {
+                if (bytes) env->DeleteLocalRef(bytes);
+                failed = true;
+                break;
+            }
+            if (!bytes) continue;
+            jsize length = env->GetArrayLength(bytes);
+            const size_t request_budget = std::min(
+                kMaxClipboardBytes, engine->clipboard_read_bytes_remaining);
+            if (length < 0 || static_cast<size_t>(length) >
+                    request_budget - total_bytes) {
+                env->DeleteLocalRef(bytes);
+                failed = true;
+                break;
+            }
+            total_bytes += static_cast<size_t>(length);
+            buffers.emplace_back(static_cast<size_t>(length));
+            if (length > 0)
+                env->GetByteArrayRegion(bytes, 0, length,
+                    reinterpret_cast<jbyte *>(buffers.back().data()));
+            env->DeleteLocalRef(bytes);
+            if (env->ExceptionCheck()) {
+                failed = true;
+                break;
+            }
+            contents.push_back({
+                read->mimes[i],
+                {buffers.back().empty() ? &kEmptyClipboardData : buffers.back().data(),
+                 buffers.back().size()}});
+        }
+    } catch (const std::bad_alloc &) {
+        failed = true;
+    }
     clear_java_exception(env, "clipboard read copy");
-    env->DeleteLocalRef(data);
+    env->DeleteLocalRef(java_mimes);
+    env->CallVoidMethod(engine->output, engine->clipboard_read_complete_method);
+    if (env->ExceptionCheck()) {
+        clear_java_exception(env, "clipboard read completion");
+        failed = true;
+    }
     if (!failed) {
-        GhosttyClipboardContent content{};
-        content.mime = *requested_mime;
-        content.data = {
-            engine->clipboard_read_buffer.empty()
-                ? nullptr
-                : engine->clipboard_read_buffer.data(),
-            engine->clipboard_read_buffer.size()};
+        engine->clipboard_read_bytes_remaining -= total_bytes;
         reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS;
-        reply.contents = &content;
-        reply.contents_len = 1;
+        reply.contents = contents.empty() ? nullptr : contents.data();
+        reply.contents_len = contents.size();
+        reply.remember = permission == 2 && read->can_remember;
         if (read->list) {
-            reply.available = &mime;
-            reply.available_len = 1;
+            reply.available = available.empty() ? nullptr : available.data();
+            reply.available_len = available.size();
         }
         read->reply(read, &reply);
     } else {
@@ -854,9 +1046,16 @@ Java_com_termux_terminal_GhosttyTerminal_nativeCreate(
     engine->progress_report_method = env->GetMethodID(
         output_class, "onProgressReport", "(II)V");
     engine->clipboard_write_method = env->GetMethodID(
-        output_class, "onOscClipboard", "(ILjava/lang/String;[BZ)I");
+        output_class, "onOscClipboard", "(I[Ljava/lang/String;[[BZ)I");
+    engine->clipboard_permission_method = env->GetMethodID(
+        output_class, "onOscClipboardReadPermission",
+        "(Ljava/lang/String;ZZ)I");
+    engine->clipboard_mimes_method = env->GetMethodID(
+        output_class, "onOscClipboardMimeTypes", "(I)[Ljava/lang/String;");
     engine->clipboard_read_method = env->GetMethodID(
-        output_class, "onOscClipboardRead", "(I)[B");
+        output_class, "onOscClipboardRead", "(ILjava/lang/String;)[B");
+    engine->clipboard_read_complete_method = env->GetMethodID(
+        output_class, "onOscClipboardReadComplete", "()V");
     engine->bell_method = env->GetMethodID(output_class, "onBell", "()V");
     engine->colors_method =
         env->GetMethodID(output_class, "onColorsChanged", "()V");
@@ -1017,6 +1216,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
         int progress_value;
         std::vector<uint8_t> pty_replies;
         bool callback_allocation_failed;
+        bool pty_replies_overflow;
         bool had_before;
         bool has_after;
         {
@@ -1027,6 +1227,9 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
             engine->pending_desktop_notification = false;
             engine->pending_progress_report = false;
             engine->callback_allocation_failed = false;
+            engine->pending_pty_writes_overflow = false;
+            engine->clipboard_read_bytes_remaining = 16 * 1024 * 1024;
+            engine->clipboard_read_requests_remaining = 16;
             had_before = read_background(engine->terminal, &before);
             engine->pending_pty_writes = &pty_replies;
             ghostty_terminal_vt_write(
@@ -1049,11 +1252,12 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
             progress_state = engine->pending_progress_state;
             progress_value = engine->pending_progress_value;
             callback_allocation_failed = engine->callback_allocation_failed;
+            pty_replies_overflow = engine->pending_pty_writes_overflow;
         }
         if (callback_allocation_failed) {
             throw std::bad_alloc();
         }
-        if (!pty_replies.empty()) {
+        if (!pty_replies_overflow && !pty_replies.empty()) {
             termux_ghostty_engine_write(engine, pty_replies.data(),
                                         pty_replies.size());
         }
@@ -1383,18 +1587,20 @@ Java_com_termux_terminal_GhosttyTerminal_nativePaste(
     bool written = false;
     termux_ghostty_engine_lock(engine);
     engine->callback_allocation_failed = false;
+    engine->pending_pty_writes_overflow = false;
     engine->pending_pty_writes = &pty_writes;
     GhosttyResult result = ghostty_terminal_paste(engine->terminal, &paste,
                                                   &written);
     engine->pending_pty_writes = nullptr;
     bool allocation_failed = engine->callback_allocation_failed;
+    bool pty_writes_overflow = engine->pending_pty_writes_overflow;
     termux_ghostty_engine_unlock(engine);
 
     if (allocation_failed) {
         throw_illegal_state(env, "Out of memory handling terminal paste");
     } else if (result != GHOSTTY_SUCCESS) {
         throw_illegal_state(env, "Could not paste terminal data");
-    } else if (written && !pty_writes.empty()) {
+    } else if (!pty_writes_overflow && written && !pty_writes.empty()) {
         termux_ghostty_engine_write(engine, pty_writes.data(),
                                     pty_writes.size());
     }

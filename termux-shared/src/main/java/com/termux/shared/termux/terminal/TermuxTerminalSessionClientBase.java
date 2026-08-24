@@ -48,14 +48,49 @@ public class TermuxTerminalSessionClientBase implements TerminalSessionClient {
     }
 
     @Override
+    @Deprecated
     public int onOscClipboard(@NonNull TerminalSession session, int location,
                               String mimeType, byte[] data, boolean clear) {
         return TerminalOutput.OSC_CLIPBOARD_RESULT_DENIED;
     }
 
     @Override
+    public int onOscClipboard(@NonNull TerminalSession session, int location,
+                              String[] mimeTypes, byte[][] data, boolean clear) {
+        if (clear) return onOscClipboard(session, location,
+            (String) null, (byte[]) null, true);
+        if (mimeTypes == null || data == null || mimeTypes.length != 1 || data.length != 1)
+            return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+        return onOscClipboard(session, location, mimeTypes[0], data[0], false);
+    }
+
+    @Override
+    public int onOscClipboardReadPermission(@NonNull TerminalSession session,
+                                            String name, boolean granted,
+                                            boolean canRemember) {
+        return granted ? 1 : 0;
+    }
+
+    @Override
+    public String[] onOscClipboardMimeTypes(@NonNull TerminalSession session, int location) {
+        return new String[]{"text/plain"};
+    }
+
+    @Override
+    @Deprecated
     public byte[] onOscClipboardRead(@NonNull TerminalSession session, int location) {
         return null;
+    }
+
+    @Override
+    public byte[] onOscClipboardRead(@NonNull TerminalSession session, int location,
+                                     String mimeType) {
+        return "text/plain".equalsIgnoreCase(mimeType)
+            ? onOscClipboardRead(session, location) : null;
+    }
+
+    @Override
+    public void onOscClipboardReadComplete(@NonNull TerminalSession session) {
     }
 
     @Override

@@ -28,10 +28,40 @@ public interface TerminalSessionClient {
 
     void onCopyTextToClipboard(@NonNull TerminalSession session, String text);
 
+    @Deprecated
     int onOscClipboard(@NonNull TerminalSession session, int location,
                        String mimeType, byte[] data, boolean clear);
 
+    default int onOscClipboard(@NonNull TerminalSession session, int location,
+                               String[] mimeTypes, byte[][] data, boolean clear) {
+        if (clear) return onOscClipboard(session, location,
+            (String) null, (byte[]) null, true);
+        if (mimeTypes == null || data == null || mimeTypes.length != 1 || data.length != 1)
+            return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
+        return onOscClipboard(session, location, mimeTypes[0], data[0], false);
+    }
+
+    default int onOscClipboardReadPermission(@NonNull TerminalSession session,
+                                             String name, boolean granted,
+                                             boolean canRemember) {
+        return granted ? 1 : 0;
+    }
+
+    default String[] onOscClipboardMimeTypes(@NonNull TerminalSession session, int location) {
+        return new String[]{"text/plain"};
+    }
+
+    @Deprecated
     byte[] onOscClipboardRead(@NonNull TerminalSession session, int location);
+
+    default byte[] onOscClipboardRead(@NonNull TerminalSession session, int location,
+                                      String mimeType) {
+        return "text/plain".equalsIgnoreCase(mimeType)
+            ? onOscClipboardRead(session, location) : null;
+    }
+
+    default void onOscClipboardReadComplete(@NonNull TerminalSession session) {
+    }
 
     void onPasteTextFromClipboard(@Nullable TerminalSession session);
 

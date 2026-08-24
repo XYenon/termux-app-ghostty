@@ -78,6 +78,12 @@
     <string name="msg_select_url_copied_to_clipboard">URL copied to clipboard</string>
     <string name="msg_link_copied_to_clipboard">Link copied to clipboard</string>
 
+    <string name="title_clipboard_read_permission">Allow clipboard access?</string>
+    <string name="msg_clipboard_read_permission">A terminal program wants to read data from the Android clipboard.</string>
+    <string name="action_clipboard_allow_once">Allow once</string>
+    <string name="action_clipboard_always_allow">Always allow this terminal authorization</string>
+    <string name="action_clipboard_deny">Deny</string>
+
     <string name="action_share_transcript">Share transcript</string>
     <string name="title_share_transcript">Terminal transcript</string>
     <string name="title_share_transcript_with">Send transcript to:</string>
