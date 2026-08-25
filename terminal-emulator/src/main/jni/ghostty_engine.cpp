@@ -424,7 +424,7 @@ std::string ghostty_string(const GhosttyString &value) {
 
 GhosttyClipboardWriteResult clipboard_write_result(
     void *userdata, const GhosttyClipboardWrite *write) {
-    constexpr size_t kMaxClipboardBytes = 16 * 1024 * 1024;
+    constexpr size_t kMaxClipboardBytes = 64 * 1024 * 1024;
     constexpr size_t kMaxClipboardRepresentations = 1024;
     constexpr size_t kMaxMimeBytes = 256;
     auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
@@ -582,7 +582,7 @@ void clipboard_read(GhosttyTerminal, void *userdata,
     reply.size = sizeof(reply);
     reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_DENIED;
 
-    constexpr size_t kMaxClipboardBytes = 16 * 1024 * 1024;
+    constexpr size_t kMaxClipboardBytes = 64 * 1024 * 1024;
     constexpr size_t kMaxRequestedMimes = 4;
     constexpr jsize kMaxAvailableMimes = 16;
     constexpr size_t kMaxMimeBytes = 256;
@@ -1251,7 +1251,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
             engine->pending_progress_report = false;
             engine->callback_allocation_failed = false;
             engine->pending_pty_writes_overflow = false;
-            engine->clipboard_read_bytes_remaining = 16 * 1024 * 1024;
+            engine->clipboard_read_bytes_remaining = 64 * 1024 * 1024;
             engine->clipboard_read_requests_remaining = 16;
             had_before = read_background(engine->terminal, &before);
             engine->pending_pty_writes = &pty_replies;

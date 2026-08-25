@@ -72,7 +72,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
     private static final int MAX_SESSIONS = 8;
 
-    static final int MAX_OSC_CLIPBOARD_BYTES = 16 * 1024 * 1024;
+    static final int MAX_OSC_CLIPBOARD_BYTES = 64 * 1024 * 1024;
     private static final int MAX_OSC_CLIPBOARD_MIME_TYPES = 16;
     private static final int MAX_OSC_CLIPBOARD_MIME_LENGTH = 256;
     private static final int MAX_OSC_CLIPBOARD_URI_ITEMS = 1024;
