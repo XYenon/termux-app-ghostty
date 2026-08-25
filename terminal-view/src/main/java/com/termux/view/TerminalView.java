@@ -9,6 +9,7 @@ import android.content.Context;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
@@ -61,6 +62,7 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
     private ExecutorService mRenderExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean mRenderScheduled = new AtomicBoolean();
     private final AtomicBoolean mRenderDirty = new AtomicBoolean();
+    private final Runnable mKittyAnimationRender = this::requestRender;
     private int mTextSize = 14;
     private int mCellWidth = 8;
     private int mCellHeight = 18;
@@ -1315,16 +1317,26 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         final boolean cursorVisible = mCursorVisible;
         mRenderDirty.set(false);
         mRenderExecutor.execute(() -> {
+            long animationDelay = -1;
             try {
+                animationDelay = terminal.tickKittyGraphicsAnimations(
+                    SystemClock.uptimeMillis());
                 if (!terminal.render(cursorVisible))
                     mRenderDirty.set(true);
             } catch (RuntimeException e) {
                 post(() -> mClient.logStackTraceWithMessage(LOG_TAG,
                     "Vulkan terminal render failed", e));
             } finally {
+                final long nextAnimationDelay = animationDelay;
                 post(() -> {
                     mRenderScheduled.set(false);
-                    if (mRenderDirty.get()) requestRender();
+                    removeCallbacks(mKittyAnimationRender);
+                    if (mRenderDirty.get()) {
+                        requestRender();
+                    } else if (nextAnimationDelay >= 0 && mSurfaceReady) {
+                        postDelayed(mKittyAnimationRender,
+                            Math.max(1, nextAnimationDelay));
+                    }
                 });
             }
         });
@@ -1873,6 +1885,8 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
+
+        removeCallbacks(mKittyAnimationRender);
 
         if (mTextSelectionCursorController != null) {
             // Might solve the following exception

@@ -184,7 +184,7 @@ public final class GhosttyTerminal implements AutoCloseable {
 
     public synchronized int getMouseShape() {
         long handle = getHandleIfOpen();
-        return handle == 0 ? MOUSE_SHAPE_TEXT : nativeGetInt(handle, 34);
+        return handle == 0 ? MOUSE_SHAPE_TEXT : nativeGetMouseShape(handle);
     }
 
     public synchronized boolean isCursorVisible() {
@@ -330,6 +330,16 @@ public final class GhosttyTerminal implements AutoCloseable {
             waitForClipboardPrompt();
             long handle = getHandleIfOpen();
             return handle != 0 && nativeRender(handle, cursorVisible);
+        }
+    }
+
+    public long tickKittyGraphicsAnimations(long nowMillis) {
+        waitForClipboardPrompt();
+        synchronized (mRendererLock) {
+            waitForClipboardPrompt();
+            long handle = getHandleIfOpen();
+            return handle == 0
+                ? -1 : nativeTickKittyGraphicsAnimations(handle, nowMillis);
         }
     }
 
@@ -490,6 +500,7 @@ public final class GhosttyTerminal implements AutoCloseable {
                                             int cellHeightPixels);
     private static native void nativeReset(long handle);
     private static native int nativeGetInt(long handle, int data);
+    private static native int nativeGetMouseShape(long handle);
     private static native boolean nativeGetBoolean(long handle, int data);
     private static native int nativeGetBackgroundColor(long handle);
     private static native String nativeGetString(long handle, int data);
@@ -532,6 +543,8 @@ public final class GhosttyTerminal implements AutoCloseable {
                                                    String fontPath);
     private static native boolean nativeRender(long handle,
                                                boolean cursorVisible);
+    private static native long nativeTickKittyGraphicsAnimations(
+        long handle, long nowMillis);
     private static native void nativeDetachSurface(long handle);
     private static native int[] nativeSelectWordOrOutput(long handle,
                                                          int column,

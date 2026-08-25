@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <climits>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -421,8 +422,8 @@ std::string ghostty_string(const GhosttyString &value) {
     return {reinterpret_cast<const char *>(value.ptr), value.len};
 }
 
-GhosttyClipboardWriteResult clipboard_write(
-    GhosttyTerminal, void *userdata, const GhosttyClipboardWrite *write) {
+GhosttyClipboardWriteResult clipboard_write_result(
+    void *userdata, const GhosttyClipboardWrite *write) {
     constexpr size_t kMaxClipboardBytes = 16 * 1024 * 1024;
     constexpr size_t kMaxClipboardRepresentations = 1024;
     constexpr size_t kMaxMimeBytes = 256;
@@ -558,6 +559,18 @@ GhosttyClipboardWriteResult clipboard_write(
         return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
     }
     return static_cast<GhosttyClipboardWriteResult>(result);
+}
+
+void clipboard_write(GhosttyTerminal, void *userdata,
+                     const GhosttyClipboardWrite *write) {
+    if (!write || write->size < offsetof(GhosttyClipboardWrite, reply) +
+            sizeof(GhosttyClipboardWriteReplyFn)) return;
+    const GhosttyClipboardWriteReplyFn reply_fn = write->reply;
+    if (!reply_fn) return;
+    GhosttyClipboardWriteReply reply{};
+    reply.size = sizeof(reply);
+    reply.result = clipboard_write_result(userdata, write);
+    reply_fn(write, &reply);
 }
 
 void clipboard_read(GhosttyTerminal, void *userdata,
@@ -1384,6 +1397,17 @@ Java_com_termux_terminal_GhosttyTerminal_nativeGetInt(
     return static_cast<jint>(value);
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_termux_terminal_GhosttyTerminal_nativeGetMouseShape(
+    JNIEnv *, jclass, jlong handle) {
+    auto *engine = termux_ghostty_engine_from_handle(handle);
+    GhosttyTerminalMouseShape value = GHOSTTY_TERMINAL_MOUSE_SHAPE_TEXT;
+    ScopedEngineLock lock(engine);
+    ghostty_terminal_get(engine->terminal,
+                         GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE, &value);
+    return static_cast<jint>(value);
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeGetBoolean(
     JNIEnv *, jclass, jlong handle, jint data) {
@@ -1581,16 +1605,21 @@ Java_com_termux_terminal_GhosttyTerminal_nativePaste(
     }
 
     static constexpr uint8_t mime_data[] = "text/plain";
-    const GhosttyClipboardContent content{
-        {mime_data, sizeof(mime_data) - 1},
-        {input.data(), input.size()},
-    };
+    const GhosttyString mime{mime_data, sizeof(mime_data) - 1};
     GhosttyPaste paste{};
     paste.size = sizeof(paste);
     paste.location = GHOSTTY_CLIPBOARD_LOCATION_STANDARD;
     paste.source = GHOSTTY_PASTE_SOURCE_CLIPBOARD;
-    paste.contents = &content;
-    paste.contents_len = 1;
+    paste.mimes = &mime;
+    paste.mimes_len = 1;
+    paste.reader = {
+        [](void *userdata, GhosttyString, GhosttyWriter writer) -> bool {
+            const auto *data = static_cast<const std::vector<uint8_t> *>(userdata);
+            return data->empty() ||
+                writer.write(writer.userdata, data->data(), data->size());
+        },
+        &input,
+    };
     // Preserve Termux's existing paste behavior. Ghostty still strips unsafe
     // control bytes and applies the current bracketed-paste mode.
     paste.allow_unsafe = true;
@@ -1616,6 +1645,18 @@ Java_com_termux_terminal_GhosttyTerminal_nativePaste(
         termux_ghostty_engine_write(engine, pty_writes.data(),
                                     pty_writes.size());
     }
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_termux_terminal_GhosttyTerminal_nativeTickKittyGraphicsAnimations(
+    JNIEnv *, jclass, jlong handle, jlong now_millis) {
+    auto *engine = termux_ghostty_engine_from_handle(handle);
+    uint64_t delay = 0;
+    ScopedEngineLock lock(engine);
+    GhosttyResult result = ghostty_kitty_graphics_animation_tick(
+        engine->terminal, static_cast<uint64_t>(std::max<jlong>(0, now_millis)),
+        &delay);
+    return result == GHOSTTY_SUCCESS ? static_cast<jlong>(delay) : -1;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

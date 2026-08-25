@@ -1,5 +1,5 @@
 diff --git a/include/ghostty/vt.h b/include/ghostty/vt.h
-index 57f0a0e65a1891e61a02037d98919fe8d864c37a..e1a8b9d28831af4e37f87b25adfc52b55bfddf6d 100644
+index 57f0a0e65..e1a8b9d28 100644
 --- a/include/ghostty/vt.h
 +++ b/include/ghostty/vt.h
 @@ -140,6 +140,7 @@ extern "C" {
@@ -12,7 +12,7 @@ index 57f0a0e65a1891e61a02037d98919fe8d864c37a..e1a8b9d28831af4e37f87b25adfc52b5
  #include <ghostty/vt/grid_ref.h>
 diff --git a/include/ghostty/vt/glyph.h b/include/ghostty/vt/glyph.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..02f26c6a3bd83b3671434bfba5dbcb8c9ddc301c
+index 000000000..02f26c6a3
 --- /dev/null
 +++ b/include/ghostty/vt/glyph.h
 @@ -0,0 +1,87 @@
@@ -104,15 +104,16 @@ index 0000000000000000000000000000000000000000..02f26c6a3bd83b3671434bfba5dbcb8c
 +
 +#endif /* GHOSTTY_VT_GLYPH_H */
 diff --git a/include/ghostty/vt/kitty_graphics.h b/include/ghostty/vt/kitty_graphics.h
-index 99cee60ac92c713769d3c057d9ca8565f14e2f12..f2a92027dd57ed60ed843db4aab07cc9d0110d1e 100644
+index 99cee60ac..7965ce1c9 100644
 --- a/include/ghostty/vt/kitty_graphics.h
 +++ b/include/ghostty/vt/kitty_graphics.h
-@@ -486,6 +486,41 @@ typedef struct {
+@@ -486,6 +486,42 @@ typedef struct {
    uint32_t source_height;
  } GhosttyKittyGraphicsPlacementRenderInfo;
- 
+
 +/**
-+ * Resolved rendering geometry for a Unicode placeholder virtual placement.
++ * Resolved rendering geometry for a Unicode placeholder virtual placement or
++ * a relative placement whose parent chain is rooted at one.
 + *
 + * The source and destination geometry has already been resolved against the
 + * virtual placement definition and the terminal's current cell dimensions.
@@ -149,16 +150,48 @@ index 99cee60ac92c713769d3c057d9ca8565f14e2f12..f2a92027dd57ed60ed843db4aab07cc9
  /**
   * Get data from a kitty graphics storage instance.
   *
-@@ -862,6 +897,28 @@ GHOSTTY_API GhosttyResult ghostty_kitty_graphics_placement_render_info(
+@@ -506,6 +542,28 @@ GHOSTTY_API GhosttyResult ghostty_kitty_graphics_get(
+     GhosttyKittyGraphicsData data,
+     void* out);
+
++/**
++ * Advance running Kitty graphics animations.
++ *
++ * Call this before rendering a frame, using a monotonic clock whose epoch is
++ * stable for the lifetime of the terminal. When an animation remains active,
++ * out_delay_ms receives the delay until the next frame should be rendered.
++ * Advancing a frame updates the image generation and marks graphics dirty.
++ *
++ * @param terminal The terminal handle
++ * @param now_ms Current monotonic time in milliseconds
++ * @param[out] out_delay_ms Delay until the next animation frame
++ * @return GHOSTTY_SUCCESS when an animation remains active,
++ *         GHOSTTY_NO_VALUE when no animation needs another tick, or
++ *         GHOSTTY_INVALID_VALUE for invalid input
++ *
++ * @ingroup kitty_graphics
++ */
++GHOSTTY_API GhosttyResult ghostty_kitty_graphics_animation_tick(
++    GhosttyTerminal terminal,
++    uint64_t now_ms,
++    uint64_t* out_delay_ms);
++
+ /**
+  * Look up a Kitty graphics image by its image ID.
+  *
+@@ -862,6 +920,31 @@ GHOSTTY_API GhosttyResult ghostty_kitty_graphics_placement_render_info(
      GhosttyTerminal terminal,
      GhosttyKittyGraphicsPlacementRenderInfo* out_info);
- 
+
 +/**
-+ * Resolve all Unicode placeholder virtual placements visible in the viewport.
++ * Resolve all Unicode placeholder virtual placements visible in the viewport
++ * and relative placements whose parent chains are rooted at them.
 + *
 + * Call with out_placements=NULL and capacity=0 to obtain the required count.
 + * In that case GHOSTTY_OUT_OF_SPACE is returned when at least one placement is
 + * present. The terminal must not be mutated while this function is running.
++ * Relative placements are anchored at the minimum visible placeholder cell of
++ * their root, matching Kitty's rendering semantics.
 + *
 + * @param terminal The terminal handle
 + * @param out_placements Caller-provided placement array, or NULL
@@ -176,16 +209,16 @@ index 99cee60ac92c713769d3c057d9ca8565f14e2f12..f2a92027dd57ed60ed843db4aab07cc9
 +    size_t* out_count);
 +
  /** @} */
- 
+
  #ifdef __cplusplus
 diff --git a/include/ghostty/vt/terminal.h b/include/ghostty/vt/terminal.h
-index 4f8999a0379235715417425c7e70d81e4a0b04b3..3df0e82ffb6aa709d398d19c4e72a6055f02a857 100644
+index e015369e3..7f7e6a3fe 100644
 --- a/include/ghostty/vt/terminal.h
 +++ b/include/ghostty/vt/terminal.h
 @@ -442,6 +442,45 @@ typedef enum GHOSTTY_ENUM_TYPED {
    GHOSTTY_CLIPBOARD_LOCATION_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
  } GhosttyClipboardLocation;
- 
+
 +/** Mouse pointer shapes accepted by OSC 22. */
 +typedef enum GHOSTTY_ENUM_TYPED {
 +  GHOSTTY_TERMINAL_MOUSE_SHAPE_DEFAULT = 0,
@@ -228,18 +261,18 @@ index 4f8999a0379235715417425c7e70d81e4a0b04b3..3df0e82ffb6aa709d398d19c4e72a605
  /**
   * One MIME representation in a clipboard write.
   *
-@@ -1842,6 +1881,9 @@ typedef enum GHOSTTY_ENUM_TYPED {
-    * Output type: bool *
+@@ -1952,6 +1991,9 @@ typedef enum GHOSTTY_ENUM_TYPED {
+    * Output type: size_t *
     */
-   GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT = 39,
+   GHOSTTY_TERMINAL_DATA_CLIPBOARD_WRITE_MAX_BYTES = 40,
 +
 +  /** The current OSC 22 mouse pointer shape. Output: GhosttyTerminalMouseShape*. */
-+  GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE = 40,
++  GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE = 41,
    GHOSTTY_TERMINAL_DATA_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
  } GhosttyTerminalData;
- 
+
 diff --git a/src/lib_vt.zig b/src/lib_vt.zig
-index 325f0e138676a29e20757a5fa3784b3c299f3014..e58013422c517fe085bb49724cad2a86fa3ce519 100644
+index 325f0e138..c803fec74 100644
 --- a/src/lib_vt.zig
 +++ b/src/lib_vt.zig
 @@ -289,6 +289,10 @@ comptime {
@@ -253,22 +286,23 @@ index 325f0e138676a29e20757a5fa3784b3c299f3014..e58013422c517fe085bb49724cad2a86
          if (features.render_state) {
              @export(&c.render_state_new, .{ .name = "ghostty_render_state_new" });
              @export(&c.render_state_update, .{ .name = "ghostty_render_state_update" });
-@@ -389,6 +393,7 @@ comptime {
+@@ -389,6 +393,8 @@ comptime {
              @export(&c.kitty_graphics_placement_viewport_pos, .{ .name = "ghostty_kitty_graphics_placement_viewport_pos" });
              @export(&c.kitty_graphics_placement_source_rect, .{ .name = "ghostty_kitty_graphics_placement_source_rect" });
              @export(&c.kitty_graphics_placement_render_info, .{ .name = "ghostty_kitty_graphics_placement_render_info" });
 +            @export(&c.kitty_graphics_virtual_placements, .{ .name = "ghostty_kitty_graphics_virtual_placements" });
++            @export(&c.kitty_graphics_animation_tick, .{ .name = "ghostty_kitty_graphics_animation_tick" });
          }
          if (features.grid_introspection) {
              @export(&c.grid_ref_cell, .{ .name = "ghostty_grid_ref_cell" });
 diff --git a/src/terminal/Terminal.zig b/src/terminal/Terminal.zig
-index 561728f5fd8aef01a7b3b967f3bae345ec10228c..f2ba572da82eb2015146a05b96d304265b4dbd9a 100644
+index 1940bc4bc..ebf90189e 100644
 --- a/src/terminal/Terminal.zig
 +++ b/src/terminal/Terminal.zig
 @@ -91,6 +91,9 @@ mouse_shape: mouse.Shape = .text,
  /// Per-session Glyph Protocol registrations.
  glyph_glossary: glyph.Glossary = .empty,
- 
+
 +/// Monotonically increasing generation for renderer cache invalidation.
 +glyph_glossary_generation: u64 = 0,
 +
@@ -283,7 +317,7 @@ index 561728f5fd8aef01a7b3b967f3bae345ec10228c..f2ba572da82eb2015146a05b96d30426
 +    if (self.glyph_glossary.entries.count() > 0) return 0;
 +
      const screen: *Screen = self.screens.active;
- 
+
      // Codepoints in [0x10, 0xFF] are always narrow (width 1, matching
 @@ -1449,7 +1455,12 @@ pub fn print(self: *Terminal, c: u21) !void {
      // non-single-width characters properly. We have a fast-path for
@@ -296,7 +330,7 @@ index 561728f5fd8aef01a7b3b967f3bae345ec10228c..f2ba572da82eb2015146a05b96d30426
 +        1
 +    else
 +        @intCast(unicode.table.get(c).width);
- 
+
      // Note: it is possible to have a width of "3" and a width of "-1" from
      // uucode.x's wcwidth. We should look into those cases and handle them
 @@ -3783,7 +3794,13 @@ pub fn glyphProtocol(
@@ -327,7 +361,7 @@ index 561728f5fd8aef01a7b3b967f3bae345ec10228c..f2ba572da82eb2015146a05b96d30426
      if (self.kitty_dnd) |dnd| dnd.chunking = .{};
 diff --git a/src/terminal/c/glyph.zig b/src/terminal/c/glyph.zig
 new file mode 100644
-index 0000000000000000000000000000000000000000..0cc4e2b38155ec00fa053cf8103212271bb6aac5
+index 000000000..0cc4e2b38
 --- /dev/null
 +++ b/src/terminal/c/glyph.zig
 @@ -0,0 +1,135 @@
@@ -467,7 +501,7 @@ index 0000000000000000000000000000000000000000..0cc4e2b38155ec00fa053cf810321227
 +    return .success;
 +}
 diff --git a/src/terminal/c/kitty_graphics.zig b/src/terminal/c/kitty_graphics.zig
-index 2bd5e8620dc4be1a84d82202c9725aefbe5b635f..3112cd1336096c5d46e70ba6af1be9fa449f6556 100644
+index 2bd5e8620..4bcbc7173 100644
 --- a/src/terminal/c/kitty_graphics.zig
 +++ b/src/terminal/c/kitty_graphics.zig
 @@ -5,6 +5,7 @@ const lib = @import("../lib.zig");
@@ -481,7 +515,7 @@ index 2bd5e8620dc4be1a84d82202c9725aefbe5b635f..3112cd1336096c5d46e70ba6af1be9fa
 @@ -546,6 +547,23 @@ pub const PlacementRenderInfo = extern struct {
      source_height: u32 = 0,
  };
- 
+
 +/// C: GhosttyKittyGraphicsVirtualPlacementRenderInfo
 +pub const VirtualPlacementRenderInfo = extern struct {
 +    size: usize = @sizeOf(VirtualPlacementRenderInfo),
@@ -502,10 +536,10 @@ index 2bd5e8620dc4be1a84d82202c9725aefbe5b635f..3112cd1336096c5d46e70ba6af1be9fa
  pub fn placement_render_info(
      iter_: PlacementIterator,
      image_: ImageHandle,
-@@ -585,6 +603,69 @@ pub fn placement_render_info(
+@@ -585,6 +603,152 @@ pub fn placement_render_info(
      return .success;
  }
- 
+
 +pub fn virtual_placements(
 +    terminal_: terminal_c.Terminal,
 +    out: ?[*]VirtualPlacementRenderInfo,
@@ -564,8 +598,91 @@ index 2bd5e8620dc4be1a84d82202c9725aefbe5b635f..3112cd1336096c5d46e70ba6af1be9fa
 +        count += 1;
 +    }
 +
++    // Relative placements rooted at virtual placements use the minimum
++    // visible placeholder cell of the root as their origin. Iterate the
++    // placeholders for each relative chain to avoid allocating an origin map
++    // in this caller-buffer API.
++    var placement_iterator = storage.placements.iterator();
++    while (placement_iterator.next()) |entry| {
++        const relative = switch (entry.value_ptr.location) {
++            .relative => |value| value,
++            .pin, .virtual => continue,
++        };
++        const chain = storage.resolveChain(relative) orelse continue;
++        if (chain.root.location != .virtual) continue;
++
++        var origin_col: ?u32 = null;
++        var origin_row: ?u32 = null;
++        var placeholder_iterator = kitty_unicode.placementIterator(top, bottom);
++        while (placeholder_iterator.next()) |placeholder| {
++            const target = storage.placeholderTarget(
++                placeholder.image_id,
++                placeholder.placement_id,
++            ) orelse continue;
++            if (!target.key.eql(chain.root_key)) continue;
++            const viewport = pages.pointFromPin(.viewport, placeholder.pin) orelse
++                continue;
++            origin_col = @min(origin_col orelse viewport.viewport.x, viewport.viewport.x);
++            origin_row = @min(origin_row orelse viewport.viewport.y, viewport.viewport.y);
++        }
++
++        const image = storage.imageById(entry.key_ptr.image_id) orelse continue;
++        const grid = entry.value_ptr.gridSize(image, t);
++        if (grid.cols == 0 or grid.rows == 0) continue;
++        const viewport_col = @as(i64, origin_col orelse continue) +
++            chain.horizontal_offset;
++        const viewport_row = @as(i64, origin_row orelse continue) +
++            chain.vertical_offset;
++        if (viewport_col >= t.cols or viewport_col + grid.cols - 1 < 0) continue;
++        if (viewport_row >= t.rows or viewport_row + grid.rows - 1 < 0) continue;
++        const resolved_col = std.math.cast(i32, viewport_col) orelse continue;
++        const resolved_row = std.math.cast(i32, viewport_row) orelse continue;
++
++        const pixel = entry.value_ptr.pixelSize(image, t);
++        if (pixel.width == 0 or pixel.height == 0) continue;
++        const offset = entry.value_ptr.cellOffset(t);
++        const source = entry.value_ptr.sourceRect(image);
++        if (out) |items| {
++            if (count < capacity) {
++                if (items[count].size < @sizeOf(VirtualPlacementRenderInfo))
++                    return .invalid_value;
++                items[count] = .{
++                    .image_id = entry.key_ptr.image_id,
++                    .viewport_col = resolved_col,
++                    .viewport_row = resolved_row,
++                    .offset_x = offset.x,
++                    .offset_y = offset.y,
++                    .pixel_width = pixel.width,
++                    .pixel_height = pixel.height,
++                    .source_x = source.x,
++                    .source_y = source.y,
++                    .source_width = source.width,
++                    .source_height = source.height,
++                    .z = entry.value_ptr.z,
++                };
++            }
++        }
++        count += 1;
++    }
++
 +    count_out.* = count;
 +    if (count > capacity or (out == null and count > 0)) return .out_of_space;
++    return .success;
++}
++
++pub fn animation_tick(
++    terminal_: terminal_c.Terminal,
++    now_ms: u64,
++    out_delay_ms: ?*u64,
++) callconv(lib.calling_conv) Result {
++    if (comptime !build_options.kitty_graphics) return .no_value;
++
++    const t = terminal_c.zigTerminal(terminal_) orelse return .invalid_value;
++    const io = terminal_c.zigIo(terminal_) orelse return .invalid_value;
++    const delay_out = out_delay_ms orelse return .invalid_value;
++    const delay = t.screens.active.kitty_images.animationTick(io, now_ms) orelse
++        return .no_value;
++    delay_out.* = delay;
 +    return .success;
 +}
 +
@@ -573,7 +690,7 @@ index 2bd5e8620dc4be1a84d82202c9725aefbe5b635f..3112cd1336096c5d46e70ba6af1be9fa
  ///
  /// Converts the placement's internal pin to viewport-relative column
 diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
-index 562fe40e614e6514bd3f0c4e4049571172270632..d4288934040dc1bc9c23f763c650569b084f262a 100644
+index 562fe40e6..36d3fd03f 100644
 --- a/src/terminal/c/main.zig
 +++ b/src/terminal/c/main.zig
 @@ -8,6 +8,7 @@ pub const color = @import("color.zig");
@@ -584,18 +701,19 @@ index 562fe40e614e6514bd3f0c4e4049571172270632..d4288934040dc1bc9c23f763c650569b
  pub const grid_ref = @import("grid_ref.zig");
  pub const grid_ref_tracked = @import("grid_ref_tracked.zig");
  pub const io = @import("io.zig");
-@@ -28,6 +29,7 @@ pub const kitty_graphics_placement_grid_size = kitty_graphics.placement_grid_siz
+@@ -28,6 +29,8 @@ pub const kitty_graphics_placement_grid_size = kitty_graphics.placement_grid_siz
  pub const kitty_graphics_placement_viewport_pos = kitty_graphics.placement_viewport_pos;
  pub const kitty_graphics_placement_source_rect = kitty_graphics.placement_source_rect;
  pub const kitty_graphics_placement_render_info = kitty_graphics.placement_render_info;
 +pub const kitty_graphics_virtual_placements = kitty_graphics.virtual_placements;
++pub const kitty_graphics_animation_tick = kitty_graphics.animation_tick;
  pub const types = @import("types.zig");
  pub const modes = @import("modes.zig");
  pub const osc = @import("osc.zig");
-@@ -83,6 +85,11 @@ pub const formatter_format_buf = formatter.format_buf;
+@@ -83,6 +86,11 @@ pub const formatter_format_buf = formatter.format_buf;
  pub const formatter_format_alloc = formatter.format_alloc;
  pub const formatter_free = formatter.free;
- 
+
 +pub const glyph_generation = glyph.generation;
 +pub const glyph_info = glyph.info;
 +pub const glyph_contours = glyph.contours;
@@ -604,7 +722,7 @@ index 562fe40e614e6514bd3f0c4e4049571172270632..d4288934040dc1bc9c23f763c650569b
  pub const render_state_new = render.new;
  pub const render_state_free = render.free;
  pub const render_state_update = render.update;
-@@ -261,6 +268,7 @@ test {
+@@ -261,6 +269,7 @@ test {
      _ = row;
      _ = focus;
      _ = formatter;
@@ -613,26 +731,37 @@ index 562fe40e614e6514bd3f0c4e4049571172270632..d4288934040dc1bc9c23f763c650569b
      _ = osc;
      _ = render;
 diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
-index 6c35d6e06d52c2247a11f235395a4e83ade15c36..563b2dad95949d824f2565bbd6e4dd75485bdbd1 100644
+index 00bb3b060..066d81b08 100644
 --- a/src/terminal/c/terminal.zig
 +++ b/src/terminal/c/terminal.zig
-@@ -28,6 +28,7 @@ const selection_c = @import("selection.zig");
- const style_c = @import("style.zig");
+@@ -29,6 +29,7 @@ const style_c = @import("style.zig");
  const color = @import("../color.zig");
  const clipboard = @import("../clipboard.zig");
+ const kitty_clipboard = @import("../kitty/clipboard.zig");
 +const mouse = @import("../mouse.zig");
  const c_io = @import("io.zig");
  const snapshot_core = @import("../snapshot/main.zig");
  const Result = @import("result.zig").Result;
-@@ -1534,6 +1535,7 @@ pub const TerminalData = enum(c_int) {
-     mode = 37,
+@@ -690,6 +691,10 @@ pub fn zigTerminal(terminal_: Terminal) ?*ZigTerminal {
+     return (terminal_ orelse return null).terminal;
+ }
+
++pub fn zigIo(terminal_: Terminal) ?std.Io {
++    return (terminal_ orelse return null).io.io();
++}
++
+ /// Attach the persistent C stream and I/O owner to a heap-stable terminal.
+ /// The caller retains ownership of both inputs if wrapper allocation fails.
+ fn wrap(
+@@ -1591,6 +1596,7 @@ pub const TerminalData = enum(c_int) {
      vt_ground = 38,
      cursor_at_prompt = 39,
-+    mouse_shape = 40,
- 
+     clipboard_write_max_bytes = 40,
++    mouse_shape = 41,
+
      /// Output type expected for querying the data of the given kind.
      pub fn OutType(comptime self: TerminalData) type {
-@@ -1552,6 +1554,7 @@ pub const TerminalData = enum(c_int) {
+@@ -1609,6 +1615,7 @@ pub const TerminalData = enum(c_int) {
              .kitty_keyboard_flags => u8,
              .scrollbar => TerminalScrollbar,
              .cursor_style => style_c.Style,
@@ -640,7 +769,7 @@ index 6c35d6e06d52c2247a11f235395a4e83ade15c36..563b2dad95949d824f2565bbd6e4dd75
              .title, .pwd => lib.String,
              .total_rows,
              .scrollback_rows,
-@@ -1697,6 +1700,7 @@ fn getTyped(
+@@ -1755,6 +1762,7 @@ fn getTyped(
          ),
          .viewport_active => out.* = t.screens.active.pages.viewport == .active,
          .vt_processing_error => out.* = wrapper.stream.handler.semantic_failure,
