@@ -25,6 +25,12 @@ if ((${#missing_packages[@]})); then
         "${missing_packages[@]}"
 fi
 
+# Zig 0.16 fails with ResolvConfParseFailed if resolv.conf has no trailing newline.
+if [[ -s /etc/resolv.conf ]] &&
+    [[ "$(tail -c 1 /etc/resolv.conf | od -An -t u1 | tr -d '[:space:]')" != "10" ]]; then
+    printf '\n' | sudo tee -a /etc/resolv.conf >/dev/null
+fi
+
 case "$(uname -m)" in
     x86_64) java_arch="x64"; zig_arch="x86_64"; emulator_abi="x86_64" ;;
     aarch64) java_arch="aarch64"; zig_arch="aarch64"; emulator_abi="arm64-v8a" ;;
