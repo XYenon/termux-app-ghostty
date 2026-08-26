@@ -15,6 +15,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.AssetFileDescriptor;
 import android.content.res.ColorStateList;
+import android.content.res.TypedArray;
 import android.net.Uri;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
@@ -754,6 +755,20 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             builder.setNeutralButton(R.string.action_clipboard_always_allow, null);
         AlertDialog dialog = builder.create();
         dialog.show();
+        TypedArray dialogColors = dialog.getContext().obtainStyledAttributes(
+            new int[]{android.R.attr.textColorPrimary});
+        ColorStateList buttonTextColor;
+        try {
+            buttonTextColor = dialogColors.getColorStateList(0);
+        } finally {
+            dialogColors.recycle();
+        }
+        if (buttonTextColor != null) {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(buttonTextColor);
+            if (canRemember)
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setTextColor(buttonTextColor);
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(buttonTextColor);
+        }
         mClipboardPermissionPromptShowing = true;
         mClipboardPermissionDialog = dialog;
         mClipboardPermissionResult = result;
