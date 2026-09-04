@@ -6,13 +6,21 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 android_sdk_root="$HOME/.local/share/android-sdk"
 java_home="$HOME/.local/share/jdks/temurin-11"
 zig_home="$HOME/.local/share/zig/0.16.0"
+setup_started=$SECONDS
+step_started=$SECONDS
+step_name=""
 
 step() {
+    if [[ -n "$step_name" ]]; then
+        printf '<== %s completed in %ss\n' "$step_name" "$((SECONDS - step_started))"
+    fi
+    step_name="$1"
+    step_started=$SECONDS
     printf '\n==> %s\n' "$1"
 }
 
 step "Installing required system packages"
-packages=(ca-certificates curl git openjdk-17-jdk-headless unzip xz-utils)
+packages=(ca-certificates curl git openjdk-17-jre-headless unzip xz-utils)
 missing_packages=()
 for package in "${packages[@]}"; do
     if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'ok installed'; then
@@ -32,8 +40,8 @@ if [[ -s /etc/resolv.conf ]] &&
 fi
 
 case "$(uname -m)" in
-    x86_64) java_arch="x64"; zig_arch="x86_64"; emulator_abi="x86_64" ;;
-    aarch64) java_arch="aarch64"; zig_arch="aarch64"; emulator_abi="arm64-v8a" ;;
+    x86_64) java_arch="x64"; zig_arch="x86_64" ;;
+    aarch64) java_arch="aarch64"; zig_arch="aarch64" ;;
     *) printf 'Unsupported architecture: %s\n' "$(uname -m)" >&2; exit 1 ;;
 esac
 
@@ -73,38 +81,32 @@ if [[ ! -x "$sdkmanager" ]]; then
     mv "$tmp_dir/android/cmdline-tools" "$android_sdk_root/cmdline-tools/latest"
 fi
 
-step "Installing Android SDK, emulator, NDK, and CMake"
+step "Installing required Android SDK components"
 sdk_java_home="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
 if [[ "$("$sdk_java_home/bin/java" -version 2>&1)" != *'version "17.'* ]]; then
     sdk_java_home="/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)"
 fi
-emulator_image="system-images;android-30;default;$emulator_abi"
-yes 2>/dev/null | JAVA_HOME="$sdk_java_home" PATH="$sdk_java_home/bin:$PATH" \
-    "$sdkmanager" --sdk_root="$android_sdk_root" --licenses >/dev/null || true
-JAVA_HOME="$sdk_java_home" PATH="$sdk_java_home/bin:$PATH" \
-    "$sdkmanager" --sdk_root="$android_sdk_root" \
-    "platform-tools" \
-    "emulator" \
-    "$emulator_image" \
-    "platforms;android-30" \
-    "build-tools;30.0.3" \
-    "ndk;29.0.14206865" \
-    "cmake;3.22.1"
-
-step "Creating Android test emulator"
-avdmanager="$android_sdk_root/cmdline-tools/latest/bin/avdmanager"
-if ! JAVA_HOME="$sdk_java_home" PATH="$sdk_java_home/bin:$PATH" \
-    "$avdmanager" list avd -c | grep -Fxq "termux-ghostty-api30"; then
-    printf 'no\n' | JAVA_HOME="$sdk_java_home" PATH="$sdk_java_home/bin:$PATH" \
-        "$avdmanager" create avd --force \
-        --name "termux-ghostty-api30" \
-        --package "$emulator_image" \
-        --device "pixel_2"
+sdk_packages=()
+[[ -x "$android_sdk_root/platform-tools/adb" ]] || sdk_packages+=("platform-tools")
+[[ -f "$android_sdk_root/platforms/android-30/android.jar" ]] || \
+    sdk_packages+=("platforms;android-30")
+[[ -x "$android_sdk_root/build-tools/30.0.3/aapt" ]] || \
+    sdk_packages+=("build-tools;30.0.3")
+# Android Gradle Plugin 4.2.2 uses this NDK for termux-shared's ndkBuild project.
+[[ -d "$android_sdk_root/ndk/21.4.7075529/toolchains/llvm/prebuilt" ]] || \
+    sdk_packages+=("ndk;21.4.7075529")
+[[ -d "$android_sdk_root/ndk/29.0.14206865/toolchains/llvm/prebuilt" ]] || \
+    sdk_packages+=("ndk;29.0.14206865")
+[[ -x "$android_sdk_root/cmake/3.22.1/bin/cmake" ]] || \
+    sdk_packages+=("cmake;3.22.1")
+if ((${#sdk_packages[@]})); then
+    yes 2>/dev/null | JAVA_HOME="$sdk_java_home" PATH="$sdk_java_home/bin:$PATH" \
+        "$sdkmanager" --sdk_root="$android_sdk_root" --licenses >/dev/null || true
+    JAVA_HOME="$sdk_java_home" PATH="$sdk_java_home/bin:$PATH" \
+        "$sdkmanager" --sdk_root="$android_sdk_root" "${sdk_packages[@]}"
+else
+    printf 'All required Android SDK components are already installed.\n'
 fi
-
-step "Starting Android test emulator"
-amp orb service start android-emulator \
-    --command "$repo_root/scripts/start-android-emulator.sh"
 
 step "Persisting the orb toolchain environment"
 environment_file="$HOME/.config/termux-app-ghostty/env.sh"
@@ -115,7 +117,7 @@ export ANDROID_HOME="$android_sdk_root"
 export ANDROID_SDK_ROOT="$android_sdk_root"
 export ANDROID_NDK_HOME="$android_sdk_root/ndk/29.0.14206865"
 export ANDROID_NDK_ROOT="\$ANDROID_NDK_HOME"
-export PATH="\$JAVA_HOME/bin:\$ANDROID_SDK_ROOT/platform-tools:\$ANDROID_SDK_ROOT/emulator:\$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$zig_home:\$HOME/.local/bin:\$PATH"
+export PATH="\$JAVA_HOME/bin:\$ANDROID_SDK_ROOT/platform-tools:\$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$zig_home:\$HOME/.local/bin:\$PATH"
 EOF
 
 profile_source="source \"$environment_file\" # termux-app-ghostty orb toolchain"
@@ -128,10 +130,11 @@ export ANDROID_HOME="$android_sdk_root"
 export ANDROID_SDK_ROOT="$android_sdk_root"
 export ANDROID_NDK_HOME="$android_sdk_root/ndk/29.0.14206865"
 export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
-export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$zig_home:$HOME/.local/bin:$PATH"
+export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$zig_home:$HOME/.local/bin:$PATH"
 
 step "Warming Gradle and verifying project configuration"
 cd "$repo_root"
 ./gradlew --no-daemon help
 
 step "Orb setup complete"
+printf 'Total setup time: %ss\n' "$((SECONDS - setup_started))"
