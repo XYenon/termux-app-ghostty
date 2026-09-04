@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.content.res.TypedArray;
 import android.media.AudioManager;
 import android.os.Environment;
@@ -16,7 +17,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
-import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -48,6 +48,7 @@ import com.termux.shared.view.KeyboardUtils;
 import com.termux.shared.view.ViewUtils;
 import com.termux.terminal.GhosttyTerminal;
 import com.termux.terminal.TerminalSession;
+import com.google.android.material.button.MaterialButton;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -726,24 +727,26 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         GhosttyTerminal terminal = session.getTerminal();
         if (terminal == null) return;
 
+        AlertDialog.Builder builder = new AlertDialog.Builder(mActivity);
+        Context dialogContext = builder.getContext();
         int padding = (int) (12 * mActivity.getResources().getDisplayMetrics().density);
         int buttonWidth = (int) (44 * mActivity.getResources().getDisplayMetrics().density);
-        LinearLayout content = new LinearLayout(mActivity);
+        LinearLayout content = new LinearLayout(dialogContext);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(padding, padding / 2, padding, padding / 2);
 
-        TextView status = new TextView(mActivity);
-        status.setText(R.string.title_find_in_terminal);
+        TextView status = new TextView(dialogContext);
         status.setTextSize(18);
         status.setSingleLine();
 
-        Button close = new Button(mActivity);
+        MaterialButton close = new MaterialButton(
+            dialogContext, null, android.R.attr.buttonBarButtonStyle);
         close.setText("×");
         close.setTextSize(22);
         close.setMinimumWidth(0);
         close.setContentDescription(mActivity.getString(android.R.string.cancel));
 
-        LinearLayout header = new LinearLayout(mActivity);
+        LinearLayout header = new LinearLayout(dialogContext);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.addView(status, new LinearLayout.LayoutParams(
             0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
@@ -751,14 +754,18 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        LinearLayout controls = new LinearLayout(mActivity);
+        LinearLayout controls = new LinearLayout(dialogContext);
         controls.setGravity(Gravity.CENTER_VERTICAL);
-        EditText input = new EditText(mActivity);
+        EditText input = new EditText(dialogContext);
         input.setSingleLine();
+        input.setHint(R.string.title_find_in_terminal);
+        status.setPadding(input.getPaddingLeft(), status.getPaddingTop(),
+            status.getPaddingRight(), status.getPaddingBottom());
         controls.addView(input, new LinearLayout.LayoutParams(
             0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
-        Button previous = new Button(mActivity);
+        MaterialButton previous = new MaterialButton(
+            dialogContext, null, android.R.attr.buttonBarButtonStyle);
         previous.setText("↑");
         previous.setTextSize(22);
         previous.setMinimumWidth(0);
@@ -766,7 +773,8 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         header.addView(previous, new LinearLayout.LayoutParams(
             buttonWidth, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        Button next = new Button(mActivity);
+        MaterialButton next = new MaterialButton(
+            dialogContext, null, android.R.attr.buttonBarButtonStyle);
         next.setText("↓");
         next.setTextSize(22);
         next.setMinimumWidth(0);
@@ -780,13 +788,11 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        AlertDialog dialog = new AlertDialog.Builder(mActivity)
-            .setView(content)
-            .create();
+        AlertDialog dialog = builder.setView(content).create();
         previous.setOnClickListener(
-            view -> searchTerminal(status, input, terminal, false));
-        next.setOnClickListener(
             view -> searchTerminal(status, input, terminal, true));
+        next.setOnClickListener(
+            view -> searchTerminal(status, input, terminal, false));
         close.setOnClickListener(view -> dialog.dismiss());
         dialog.setOnDismissListener(ignored -> {
             terminal.clearSearch();
@@ -801,9 +807,16 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         Window window = dialog.getWindow();
         if (window != null) {
             TypedArray colors = dialog.getContext().obtainStyledAttributes(
-                new int[]{android.R.attr.colorBackground});
+                new int[]{com.google.android.material.R.attr.colorSurface,
+                    android.R.attr.textColorPrimary});
             try {
                 content.setBackgroundColor(colors.getColor(0, 0xff000000));
+                ColorStateList buttonTextColor = colors.getColorStateList(1);
+                if (buttonTextColor != null) {
+                    previous.setTextColor(buttonTextColor);
+                    next.setTextColor(buttonTextColor);
+                    close.setTextColor(buttonTextColor);
+                }
             } finally {
                 colors.recycle();
             }
@@ -821,7 +834,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         String query = input.getText().toString();
         if (query.isEmpty()) {
             terminal.clearSearch();
-            status.setText(R.string.title_find_in_terminal);
+            status.setText(null);
             mActivity.getTerminalView().onScreenUpdated(true);
             return;
         }
