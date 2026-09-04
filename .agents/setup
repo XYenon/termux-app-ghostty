@@ -40,8 +40,8 @@ if [[ -s /etc/resolv.conf ]] &&
 fi
 
 case "$(uname -m)" in
-    x86_64) java_arch="x64"; zig_arch="x86_64" ;;
-    aarch64) java_arch="aarch64"; zig_arch="aarch64" ;;
+    x86_64) java_arch="x64"; zig_arch="x86_64"; emulator_abi="x86_64" ;;
+    aarch64) java_arch="aarch64"; zig_arch="aarch64"; emulator_abi="arm64-v8a" ;;
     *) printf 'Unsupported architecture: %s\n' "$(uname -m)" >&2; exit 1 ;;
 esac
 
@@ -88,6 +88,10 @@ if [[ "$("$sdk_java_home/bin/java" -version 2>&1)" != *'version "17.'* ]]; then
 fi
 sdk_packages=()
 [[ -x "$android_sdk_root/platform-tools/adb" ]] || sdk_packages+=("platform-tools")
+[[ -x "$android_sdk_root/emulator/emulator" ]] || sdk_packages+=("emulator")
+emulator_image="system-images;android-30;default;$emulator_abi"
+[[ -f "$android_sdk_root/system-images/android-30/default/$emulator_abi/system.img" ]] || \
+    sdk_packages+=("$emulator_image")
 [[ -f "$android_sdk_root/platforms/android-30/android.jar" ]] || \
     sdk_packages+=("platforms;android-30")
 [[ -x "$android_sdk_root/build-tools/30.0.3/aapt" ]] || \
@@ -108,6 +112,17 @@ else
     printf 'All required Android SDK components are already installed.\n'
 fi
 
+step "Creating Android test emulator"
+avdmanager="$android_sdk_root/cmdline-tools/latest/bin/avdmanager"
+if ! JAVA_HOME="$sdk_java_home" PATH="$sdk_java_home/bin:$PATH" \
+    "$avdmanager" list avd -c | grep -Fxq "termux-ghostty-api30"; then
+    printf 'no\n' | JAVA_HOME="$sdk_java_home" PATH="$sdk_java_home/bin:$PATH" \
+        "$avdmanager" create avd --force \
+        --name "termux-ghostty-api30" \
+        --package "$emulator_image" \
+        --device "pixel_2"
+fi
+
 step "Persisting the orb toolchain environment"
 environment_file="$HOME/.config/termux-app-ghostty/env.sh"
 mkdir -p "$(dirname "$environment_file")"
@@ -117,7 +132,7 @@ export ANDROID_HOME="$android_sdk_root"
 export ANDROID_SDK_ROOT="$android_sdk_root"
 export ANDROID_NDK_HOME="$android_sdk_root/ndk/29.0.14206865"
 export ANDROID_NDK_ROOT="\$ANDROID_NDK_HOME"
-export PATH="\$JAVA_HOME/bin:\$ANDROID_SDK_ROOT/platform-tools:\$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$zig_home:\$HOME/.local/bin:\$PATH"
+export PATH="\$JAVA_HOME/bin:\$ANDROID_SDK_ROOT/platform-tools:\$ANDROID_SDK_ROOT/emulator:\$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$zig_home:\$HOME/.local/bin:\$PATH"
 EOF
 
 profile_source="source \"$environment_file\" # termux-app-ghostty orb toolchain"
@@ -130,7 +145,7 @@ export ANDROID_HOME="$android_sdk_root"
 export ANDROID_SDK_ROOT="$android_sdk_root"
 export ANDROID_NDK_HOME="$android_sdk_root/ndk/29.0.14206865"
 export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
-export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$zig_home:$HOME/.local/bin:$PATH"
+export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$zig_home:$HOME/.local/bin:$PATH"
 
 step "Warming Gradle and verifying project configuration"
 cd "$repo_root"
