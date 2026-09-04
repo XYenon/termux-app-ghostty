@@ -300,6 +300,20 @@ public final class GhosttyTerminal implements AutoCloseable {
         if (handle != 0) nativeScrollToBottom(handle);
     }
 
+    /** Search scrollback and select the next or previous match. */
+    public synchronized int[] search(String query, boolean next) {
+        long handle = getHandleIfOpen();
+        return handle == 0 || query == null || query.isEmpty()
+            ? new int[]{0, 0}
+            : nativeSearch(handle, query.getBytes(StandardCharsets.UTF_8), next);
+    }
+
+    /** End an active search and remove its match selection. */
+    public synchronized void clearSearch() {
+        long handle = getHandleIfOpen();
+        if (handle != 0) nativeClearSearch(handle);
+    }
+
     public void attachSurface(Surface surface, int width, int height,
                               int textSize, @Nullable String fontPath) {
         waitForClipboardPrompt();
@@ -534,6 +548,9 @@ public final class GhosttyTerminal implements AutoCloseable {
     private static native void nativeSendFocus(long handle, boolean focused);
     private static native void nativeScrollViewport(long handle, int rows);
     private static native void nativeScrollToBottom(long handle);
+    private static native int[] nativeSearch(long handle, byte[] query,
+                                             boolean next);
+    private static native void nativeClearSearch(long handle);
     private static native void nativeAttachSurface(long handle, Surface surface,
                                                    int width, int height,
                                                    int textSize,

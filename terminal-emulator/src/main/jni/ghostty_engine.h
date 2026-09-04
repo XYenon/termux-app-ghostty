@@ -35,6 +35,7 @@ struct TermuxGhosttyEngine {
     GhosttyRenderState render_state;
     GhosttyRenderStateRowIterator row_iterator;
     GhosttyRenderStateRowCells row_cells;
+    GhosttySearch search;
 
     char *title;
     char *pwd;

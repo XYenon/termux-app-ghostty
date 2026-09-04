@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="action_find_in_terminal">在终端中查找</string>
+    <string name="title_find_in_terminal">在终端中查找</string>
+    <string name="terminal_search_results_count">第 %1$d / %2$d 项</string>
+    <string name="terminal_search_no_matches">无匹配项</string>
+    <string name="action_find_next">下一个</string>
+    <string name="action_find_previous">上一个</string>
     <string name="title_clipboard_read_permission">允许读取剪贴板？</string>
     <string name="msg_clipboard_read_permission">某个终端程序想要读取 Android 剪贴板中的数据。</string>
     <string name="action_clipboard_allow_once">仅允许一次</string>

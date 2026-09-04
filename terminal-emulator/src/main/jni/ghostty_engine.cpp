@@ -1004,6 +1004,7 @@ jbyteArray format_selection(JNIEnv *env, TermuxGhosttyEngine *engine,
 void destroy_engine(JNIEnv *env, TermuxGhosttyEngine *engine) {
     if (!engine) return;
     termux_renderer_destroy(engine->renderer);
+    ghostty_search_free(engine->search);
     ghostty_render_state_row_cells_free(engine->row_cells);
     ghostty_render_state_row_iterator_free(engine->row_iterator);
     ghostty_render_state_free(engine->render_state);
@@ -1799,6 +1800,94 @@ Java_com_termux_terminal_GhosttyTerminal_nativeScrollToBottom(
     scroll.tag = GHOSTTY_SCROLL_VIEWPORT_BOTTOM;
     termux_ghostty_engine_lock(engine);
     ghostty_terminal_scroll_viewport(engine->terminal, scroll);
+    termux_ghostty_engine_unlock(engine);
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_termux_terminal_GhosttyTerminal_nativeSearch(
+    JNIEnv *env, jclass, jlong handle, jbyteArray query, jboolean next) {
+    auto *engine = termux_ghostty_engine_from_handle(handle);
+    if (!engine || !query) {
+        throw_illegal_argument(env, "Invalid terminal search");
+        return nullptr;
+    }
+
+    const jsize query_length = env->GetArrayLength(query);
+    std::vector<uint8_t> query_bytes(static_cast<size_t>(query_length));
+    env->GetByteArrayRegion(query, 0, query_length,
+                            reinterpret_cast<jbyte *>(query_bytes.data()));
+    if (env->ExceptionCheck()) return nullptr;
+
+    const GhosttyString needle{query_bytes.data(), query_bytes.size()};
+    size_t selected = 0;
+    size_t total = 0;
+    GhosttySelection match{};
+    match.size = sizeof(match);
+
+    termux_ghostty_engine_lock(engine);
+    GhosttyResult result = GHOSTTY_SUCCESS;
+    if (!engine->search) {
+        result = ghostty_search_new(nullptr, &engine->search,
+                                    engine->terminal);
+    }
+    if (result == GHOSTTY_SUCCESS) {
+        result = ghostty_search_set(
+            engine->search, GHOSTTY_SEARCH_OPT_NEEDLE, &needle);
+    }
+    if (result == GHOSTTY_SUCCESS) result = ghostty_search_run(engine->search);
+    if (result == GHOSTTY_SUCCESS) {
+        result = ghostty_search_set(
+            engine->search,
+            next ? GHOSTTY_SEARCH_OPT_SELECT_NEXT
+                 : GHOSTTY_SEARCH_OPT_SELECT_PREV,
+            nullptr);
+    }
+    if (result == GHOSTTY_SUCCESS) {
+        const GhosttySearchData keys[] = {
+            GHOSTTY_SEARCH_DATA_SELECTED_INDEX,
+            GHOSTTY_SEARCH_DATA_TOTAL_MATCHES,
+            GHOSTTY_SEARCH_DATA_SELECTED_MATCH,
+        };
+        void *values[] = {&selected, &total, &match};
+        result = ghostty_search_get_multi(engine->search, 3, keys, values,
+                                          nullptr);
+    }
+    if (result == GHOSTTY_SUCCESS) {
+        result = ghostty_terminal_set(engine->terminal,
+                                      GHOSTTY_TERMINAL_OPT_SELECTION, &match);
+    } else if (result == GHOSTTY_NO_VALUE) {
+        ghostty_terminal_set(engine->terminal,
+                             GHOSTTY_TERMINAL_OPT_SELECTION, nullptr);
+    }
+    termux_ghostty_engine_unlock(engine);
+
+    if (result != GHOSTTY_SUCCESS && result != GHOSTTY_NO_VALUE) {
+        throw_illegal_state(env, result == GHOSTTY_OUT_OF_MEMORY
+            ? "Out of memory searching terminal"
+            : "Could not search terminal");
+        return nullptr;
+    }
+
+    jint values[] = {
+        result == GHOSTTY_SUCCESS ? static_cast<jint>(selected + 1) : 0,
+        result == GHOSTTY_SUCCESS ? static_cast<jint>(total) : 0,
+    };
+    jintArray array = env->NewIntArray(2);
+    if (array) env->SetIntArrayRegion(array, 0, 2, values);
+    return array;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_termux_terminal_GhosttyTerminal_nativeClearSearch(
+    JNIEnv *, jclass, jlong handle) {
+    auto *engine = termux_ghostty_engine_from_handle(handle);
+    if (!engine) return;
+    termux_ghostty_engine_lock(engine);
+    if (engine->search) {
+        ghostty_search_set(engine->search, GHOSTTY_SEARCH_OPT_NEEDLE, nullptr);
+    }
+    ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_SELECTION,
+                         nullptr);
     termux_ghostty_engine_unlock(engine);
 }
 

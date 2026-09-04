@@ -777,3 +777,17 @@ index 00bb3b060..066d81b08 100644
          .vt_ground => out.* = wrapper.stream.ground(),
          .scrollback_max_bytes => {
              const max = t.screens.get(.primary).?.pages.limits.bytes.explicit;
+diff --git a/src/terminal/page.zig b/src/terminal/page.zig
+index fba27bdce..d3da7d905 100644
+--- a/src/terminal/page.zig
++++ b/src/terminal/page.zig
+@@ -2003,7 +2003,8 @@ pub const Capacity = struct {
+     fn availableBytesForGrid(self: Capacity) usize {
+         comptime {
+             assert(cells_align % Page.MetaLayout.alignment == 0);
+-            assert(@sizeOf(Cell) % Page.MetaLayout.alignment == 0);
++            assert(@sizeOf(Cell) %
++                @as(usize, Page.MetaLayout.alignment) == 0);
+         }
+
+         const l = Page.layout(self);

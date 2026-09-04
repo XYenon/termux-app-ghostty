@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.res.TypedArray;
 import android.media.AudioManager;
 import android.os.Environment;
 import android.text.TextUtils;
@@ -13,8 +14,13 @@ import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import com.termux.R;
@@ -276,6 +282,8 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
                 mTermuxTerminalSessionActivityClient.addNewSession(false, null);
             } else if (unicodeChar == 'u' /* urls */) {
                 showUrlSelection();
+            } else if (unicodeChar == 'f' /* find */) {
+                showTerminalSearch();
             } else if (unicodeChar == 'v') {
                 doPaste();
             } else if (unicodeChar == '+' || e.getUnicodeChar(KeyEvent.META_SHIFT_ON) == '+') {
@@ -710,6 +718,121 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         if (DataUtils.isNullOrEmpty(selectedText)) return;
         ShareUtils.shareText(mActivity, mActivity.getString(R.string.title_share_selected_text),
             selectedText, mActivity.getString(R.string.title_share_selected_text_with));
+    }
+
+    public void showTerminalSearch() {
+        TerminalSession session = mActivity.getCurrentSession();
+        if (session == null) return;
+        GhosttyTerminal terminal = session.getTerminal();
+        if (terminal == null) return;
+
+        int padding = (int) (12 * mActivity.getResources().getDisplayMetrics().density);
+        int buttonWidth = (int) (44 * mActivity.getResources().getDisplayMetrics().density);
+        LinearLayout content = new LinearLayout(mActivity);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(padding, padding / 2, padding, padding / 2);
+
+        TextView status = new TextView(mActivity);
+        status.setText(R.string.title_find_in_terminal);
+        status.setTextSize(18);
+        status.setSingleLine();
+
+        Button close = new Button(mActivity);
+        close.setText("×");
+        close.setTextSize(22);
+        close.setMinimumWidth(0);
+        close.setContentDescription(mActivity.getString(android.R.string.cancel));
+
+        LinearLayout header = new LinearLayout(mActivity);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(status, new LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        content.addView(header, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout controls = new LinearLayout(mActivity);
+        controls.setGravity(Gravity.CENTER_VERTICAL);
+        EditText input = new EditText(mActivity);
+        input.setSingleLine();
+        controls.addView(input, new LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+
+        Button previous = new Button(mActivity);
+        previous.setText("↑");
+        previous.setTextSize(22);
+        previous.setMinimumWidth(0);
+        previous.setContentDescription(mActivity.getString(R.string.action_find_previous));
+        header.addView(previous, new LinearLayout.LayoutParams(
+            buttonWidth, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        Button next = new Button(mActivity);
+        next.setText("↓");
+        next.setTextSize(22);
+        next.setMinimumWidth(0);
+        next.setContentDescription(mActivity.getString(R.string.action_find_next));
+        header.addView(next, new LinearLayout.LayoutParams(
+            buttonWidth, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        controls.addView(close, new LinearLayout.LayoutParams(
+            buttonWidth, LinearLayout.LayoutParams.WRAP_CONTENT));
+        content.addView(controls, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        AlertDialog dialog = new AlertDialog.Builder(mActivity)
+            .setView(content)
+            .create();
+        previous.setOnClickListener(
+            view -> searchTerminal(status, input, terminal, false));
+        next.setOnClickListener(
+            view -> searchTerminal(status, input, terminal, true));
+        close.setOnClickListener(view -> dialog.dismiss());
+        dialog.setOnDismissListener(ignored -> {
+            terminal.clearSearch();
+            if (mActivity.getCurrentSession() == session)
+                mActivity.getTerminalView().onScreenUpdated(true);
+        });
+        input.setOnEditorActionListener((view, actionId, event) -> {
+            searchTerminal(status, input, terminal, true);
+            return true;
+        });
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            TypedArray colors = dialog.getContext().obtainStyledAttributes(
+                new int[]{android.R.attr.colorBackground});
+            try {
+                content.setBackgroundColor(colors.getColor(0, 0xff000000));
+            } finally {
+                colors.recycle();
+            }
+            window.setBackgroundDrawableResource(android.R.color.transparent);
+            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.setGravity(Gravity.BOTTOM);
+            window.getDecorView().setPadding(0, 0, 0, 0);
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    private void searchTerminal(TextView status, EditText input,
+                                GhosttyTerminal terminal, boolean next) {
+        String query = input.getText().toString();
+        if (query.isEmpty()) {
+            terminal.clearSearch();
+            status.setText(R.string.title_find_in_terminal);
+            mActivity.getTerminalView().onScreenUpdated(true);
+            return;
+        }
+        int[] result = terminal.search(query, next);
+        if (result[1] == 0) {
+            status.setText(R.string.terminal_search_no_matches);
+        } else {
+            status.setText(mActivity.getString(
+                R.string.terminal_search_results_count, result[0], result[1]));
+        }
+        mActivity.getTerminalView().onScreenUpdated(true);
     }
 
     public void showUrlSelection() {
