@@ -84,6 +84,25 @@ public final class GhosttyTerminal implements AutoCloseable {
     public static final int MOUSE_SHAPE_ZOOM_IN = 32;
     public static final int MOUSE_SHAPE_ZOOM_OUT = 33;
 
+    /**
+     * Extra-keys codes for keys that Android KeyEvent does not define on API 30.
+     * Native {@code map_android_key} must stay in sync with these values.
+     */
+    public static final int KEYCODE_F13 = 0x10000 + 13;
+    public static final int KEYCODE_F14 = 0x10000 + 14;
+    public static final int KEYCODE_F15 = 0x10000 + 15;
+    public static final int KEYCODE_F16 = 0x10000 + 16;
+    public static final int KEYCODE_F17 = 0x10000 + 17;
+    public static final int KEYCODE_F18 = 0x10000 + 18;
+    public static final int KEYCODE_F19 = 0x10000 + 19;
+    public static final int KEYCODE_F20 = 0x10000 + 20;
+    public static final int KEYCODE_F21 = 0x10000 + 21;
+    public static final int KEYCODE_F22 = 0x10000 + 22;
+    public static final int KEYCODE_F23 = 0x10000 + 23;
+    public static final int KEYCODE_F24 = 0x10000 + 24;
+    public static final int KEYCODE_F25 = 0x10000 + 25;
+    public static final int KEYCODE_CONTEXT_MENU = 0x10000 + 29;
+
     private long mNativeHandle;
     private final Object mRendererLock = new Object();
     private boolean mClipboardPromptActive;

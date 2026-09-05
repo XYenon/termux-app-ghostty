@@ -94,6 +94,8 @@ emulator_image="system-images;android-30;default;$emulator_abi"
     sdk_packages+=("$emulator_image")
 [[ -f "$android_sdk_root/platforms/android-30/android.jar" ]] || \
     sdk_packages+=("platforms;android-30")
+[[ -x "$android_sdk_root/build-tools/30.0.2/aapt" ]] || \
+    sdk_packages+=("build-tools;30.0.2")
 [[ -x "$android_sdk_root/build-tools/30.0.3/aapt" ]] || \
     sdk_packages+=("build-tools;30.0.3")
 # Android Gradle Plugin 4.2.2 uses this NDK for termux-shared's ndkBuild project.

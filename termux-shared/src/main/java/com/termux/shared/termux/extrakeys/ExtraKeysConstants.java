@@ -2,6 +2,8 @@ package com.termux.shared.termux.extrakeys;
 
 import android.view.KeyEvent;
 
+import com.termux.terminal.GhosttyTerminal;
+
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -46,6 +48,22 @@ public class ExtraKeysConstants {
         put("F10", KeyEvent.KEYCODE_F10);
         put("F11", KeyEvent.KEYCODE_F11);
         put("F12", KeyEvent.KEYCODE_F12);
+        put("F13", GhosttyTerminal.KEYCODE_F13);
+        put("F14", GhosttyTerminal.KEYCODE_F14);
+        put("F15", GhosttyTerminal.KEYCODE_F15);
+        put("F16", GhosttyTerminal.KEYCODE_F16);
+        put("F17", GhosttyTerminal.KEYCODE_F17);
+        put("F18", GhosttyTerminal.KEYCODE_F18);
+        put("F19", GhosttyTerminal.KEYCODE_F19);
+        put("F20", GhosttyTerminal.KEYCODE_F20);
+        put("F21", GhosttyTerminal.KEYCODE_F21);
+        put("F22", GhosttyTerminal.KEYCODE_F22);
+        put("F23", GhosttyTerminal.KEYCODE_F23);
+        put("F24", GhosttyTerminal.KEYCODE_F24);
+        put("F25", GhosttyTerminal.KEYCODE_F25);
+        put("HELP", KeyEvent.KEYCODE_HELP);
+        put("CONTEXT_MENU", GhosttyTerminal.KEYCODE_CONTEXT_MENU);
+        put("MENU", GhosttyTerminal.KEYCODE_CONTEXT_MENU);
     }};
 
 
@@ -202,6 +220,9 @@ public class ExtraKeysConstants {
 
         put("DELETE", "DEL");
         put("BACKSPACE", "BKSP");
+
+        put("CONTEXTMENU", "CONTEXT_MENU");
+        put("APP", "CONTEXT_MENU");
 
         // easier for writing in termux.properties
         put("BACKSLASH", "\\");

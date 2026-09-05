@@ -849,6 +849,13 @@ void throw_illegal_argument(JNIEnv *env, const char *message) {
     if (clazz) env->ThrowNew(clazz, message);
 }
 
+// Extra-keys F13-F25 / Context Menu are not Android KeyEvent codes on
+// API 30. These values are shared with ExtraKeysConstants.
+constexpr jint kSyntheticKeyBase = 0x10000;
+constexpr jint kSyntheticF13 = kSyntheticKeyBase + 13;
+constexpr jint kSyntheticF25 = kSyntheticKeyBase + 25;
+constexpr jint kSyntheticContextMenu = kSyntheticKeyBase + 29;
+
 GhosttyKey map_android_key(jint key) {
     if (key >= AKEYCODE_A && key <= AKEYCODE_Z) {
         return static_cast<GhosttyKey>(
@@ -861,6 +868,10 @@ GhosttyKey map_android_key(jint key) {
     if (key >= AKEYCODE_F1 && key <= AKEYCODE_F12) {
         return static_cast<GhosttyKey>(
             GHOSTTY_KEY_F1 + (key - AKEYCODE_F1));
+    }
+    if (key >= kSyntheticF13 && key <= kSyntheticF25) {
+        return static_cast<GhosttyKey>(
+            GHOSTTY_KEY_F13 + (key - kSyntheticF13));
     }
     if (key >= AKEYCODE_NUMPAD_0 && key <= AKEYCODE_NUMPAD_9) {
         return static_cast<GhosttyKey>(
@@ -915,6 +926,8 @@ GhosttyKey map_android_key(jint key) {
         case AKEYCODE_CAPS_LOCK: return GHOSTTY_KEY_CAPS_LOCK;
         case AKEYCODE_SYSRQ: return GHOSTTY_KEY_PRINT_SCREEN;
         case AKEYCODE_BREAK: return GHOSTTY_KEY_PAUSE;
+        case AKEYCODE_HELP: return GHOSTTY_KEY_HELP;
+        case kSyntheticContextMenu: return GHOSTTY_KEY_CONTEXT_MENU;
         default: return GHOSTTY_KEY_UNIDENTIFIED;
     }
 }

@@ -10,6 +10,7 @@ import com.google.android.material.button.MaterialButton;
 import com.termux.shared.termux.extrakeys.ExtraKeyButton;
 import com.termux.shared.termux.extrakeys.ExtraKeysView;
 import com.termux.shared.termux.extrakeys.SpecialButton;
+import com.termux.terminal.GhosttyTerminal;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
 
@@ -55,6 +56,14 @@ public class TerminalExtraKeys implements ExtraKeysView.IExtraKeysView {
         if (PRIMARY_KEY_CODES_FOR_STRINGS.containsKey(key)) {
             Integer keyCode = PRIMARY_KEY_CODES_FOR_STRINGS.get(key);
             if (keyCode == null) return;
+            if (keyCode >= GhosttyTerminal.KEYCODE_F13) {
+                int keyMod = 0;
+                if (ctrlDown) keyMod |= GhosttyTerminal.MOD_CTRL;
+                if (altDown) keyMod |= GhosttyTerminal.MOD_ALT;
+                if (shiftDown) keyMod |= GhosttyTerminal.MOD_SHIFT;
+                mTerminalView.handleKeyCode(keyCode, keyMod);
+                return;
+            }
             int metaState = 0;
             if (ctrlDown) metaState |= KeyEvent.META_CTRL_ON | KeyEvent.META_CTRL_LEFT_ON;
             if (altDown) metaState |= KeyEvent.META_ALT_ON | KeyEvent.META_ALT_LEFT_ON;

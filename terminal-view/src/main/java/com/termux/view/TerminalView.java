@@ -895,6 +895,7 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         } else if (event.isSystem() &&
                    keyCode != KeyEvent.KEYCODE_SYSRQ &&
                    keyCode != KeyEvent.KEYCODE_BREAK &&
+                   keyCode != KeyEvent.KEYCODE_HELP &&
                    (!mClient.shouldBackButtonBeMappedToEscape() ||
                     keyCode != KeyEvent.KEYCODE_BACK)) {
             return super.onKeyDown(keyCode, event);
@@ -1180,7 +1181,8 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         if (!forwarded && clientHandled) return true;
         if (!forwarded && event.isSystem() &&
                    keyCode != KeyEvent.KEYCODE_SYSRQ &&
-                   keyCode != KeyEvent.KEYCODE_BREAK) {
+                   keyCode != KeyEvent.KEYCODE_BREAK &&
+                   keyCode != KeyEvent.KEYCODE_HELP) {
             // Let system key events through.
             return super.onKeyUp(keyCode, event);
         }
