@@ -1,8 +1,8 @@
 diff --git a/include/ghostty/vt.h b/include/ghostty/vt.h
-index 57f0a0e65..e1a8b9d28 100644
+index cfa1017e7..48a31ee16 100644
 --- a/include/ghostty/vt.h
 +++ b/include/ghostty/vt.h
-@@ -140,6 +140,7 @@ extern "C" {
+@@ -148,6 +148,7 @@ extern "C" {
  #include <ghostty/vt/device.h>
  #include <ghostty/vt/focus.h>
  #include <ghostty/vt/formatter.h>
@@ -212,7 +212,7 @@ index 99cee60ac..7965ce1c9 100644
 
  #ifdef __cplusplus
 diff --git a/include/ghostty/vt/terminal.h b/include/ghostty/vt/terminal.h
-index e015369e3..7f7e6a3fe 100644
+index db5420d2f..08c7e8828 100644
 --- a/include/ghostty/vt/terminal.h
 +++ b/include/ghostty/vt/terminal.h
 @@ -442,6 +442,45 @@ typedef enum GHOSTTY_ENUM_TYPED {
@@ -261,7 +261,7 @@ index e015369e3..7f7e6a3fe 100644
  /**
   * One MIME representation in a clipboard write.
   *
-@@ -1952,6 +1991,9 @@ typedef enum GHOSTTY_ENUM_TYPED {
+@@ -1951,6 +1990,9 @@ typedef enum GHOSTTY_ENUM_TYPED {
     * Output type: size_t *
     */
    GHOSTTY_TERMINAL_DATA_CLIPBOARD_WRITE_MAX_BYTES = 40,
@@ -272,10 +272,10 @@ index e015369e3..7f7e6a3fe 100644
  } GhosttyTerminalData;
 
 diff --git a/src/lib_vt.zig b/src/lib_vt.zig
-index 325f0e138..c803fec74 100644
+index a0227aef7..b95ecd78b 100644
 --- a/src/lib_vt.zig
 +++ b/src/lib_vt.zig
-@@ -289,6 +289,10 @@ comptime {
+@@ -290,6 +290,10 @@ comptime {
              @export(&c.terminal_selection_format_buf, .{ .name = "ghostty_terminal_selection_format_buf" });
              @export(&c.terminal_selection_format_alloc, .{ .name = "ghostty_terminal_selection_format_alloc" });
          }
@@ -286,7 +286,7 @@ index 325f0e138..c803fec74 100644
          if (features.render_state) {
              @export(&c.render_state_new, .{ .name = "ghostty_render_state_new" });
              @export(&c.render_state_update, .{ .name = "ghostty_render_state_update" });
-@@ -389,6 +393,8 @@ comptime {
+@@ -400,6 +404,8 @@ comptime {
              @export(&c.kitty_graphics_placement_viewport_pos, .{ .name = "ghostty_kitty_graphics_placement_viewport_pos" });
              @export(&c.kitty_graphics_placement_source_rect, .{ .name = "ghostty_kitty_graphics_placement_source_rect" });
              @export(&c.kitty_graphics_placement_render_info, .{ .name = "ghostty_kitty_graphics_placement_render_info" });
@@ -296,7 +296,7 @@ index 325f0e138..c803fec74 100644
          if (features.grid_introspection) {
              @export(&c.grid_ref_cell, .{ .name = "ghostty_grid_ref_cell" });
 diff --git a/src/terminal/Terminal.zig b/src/terminal/Terminal.zig
-index 1940bc4bc..ebf90189e 100644
+index e9cc3b8e6..f55314f76 100644
 --- a/src/terminal/Terminal.zig
 +++ b/src/terminal/Terminal.zig
 @@ -91,6 +91,9 @@ mouse_shape: mouse.Shape = .text,
@@ -309,7 +309,7 @@ index 1940bc4bc..ebf90189e 100644
  /// Kitty drag and drop protocol (OSC 72) state. Allocated when a client
  /// registers to accept drops (t=a) and freed when it unregisters (t=A),
  /// so a terminal that never runs a drag and drop aware program pays
-@@ -614,6 +617,9 @@ fn printSliceFast(
+@@ -615,6 +618,9 @@ fn printSliceFast(
      grapheme_cluster: bool,
      allow_unicode: bool,
  ) !usize {
@@ -319,7 +319,7 @@ index 1940bc4bc..ebf90189e 100644
      const screen: *Screen = self.screens.active;
 
      // Codepoints in [0x10, 0xFF] are always narrow (width 1, matching
-@@ -1449,7 +1455,12 @@ pub fn print(self: *Terminal, c: u21) !void {
+@@ -1450,7 +1456,12 @@ pub fn print(self: *Terminal, c: u21) !void {
      // non-single-width characters properly. We have a fast-path for
      // byte-sized characters since they're so common. We can ignore
      // control characters because they're always filtered prior.
@@ -333,7 +333,7 @@ index 1940bc4bc..ebf90189e 100644
 
      // Note: it is possible to have a width of "3" and a width of "-1" from
      // uucode.x's wcwidth. We should look into those cases and handle them
-@@ -3783,7 +3794,13 @@ pub fn glyphProtocol(
+@@ -3800,7 +3811,13 @@ pub fn glyphProtocol(
  ) ?glyph.Response {
      const resp = glyph.execute(alloc, &self.glyph_glossary, req);
      switch (req.*) {
@@ -348,7 +348,7 @@ index 1940bc4bc..ebf90189e 100644
          .support, .query => {},
      }
      return resp;
-@@ -4914,6 +4931,10 @@ pub fn fullReset(self: *Terminal) void {
+@@ -4931,6 +4948,10 @@ pub fn fullReset(self: *Terminal) void {
      self.pwd.clearRetainingCapacity();
      self.title.clearRetainingCapacity();
      self.glyph_glossary.clearAndFree(self.gpa());
@@ -690,7 +690,7 @@ index 2bd5e8620..4bcbc7173 100644
  ///
  /// Converts the placement's internal pin to viewport-relative column
 diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
-index 562fe40e6..36d3fd03f 100644
+index 45b4dc47f..b8d8ef4ab 100644
 --- a/src/terminal/c/main.zig
 +++ b/src/terminal/c/main.zig
 @@ -8,6 +8,7 @@ pub const color = @import("color.zig");
@@ -710,7 +710,7 @@ index 562fe40e6..36d3fd03f 100644
  pub const types = @import("types.zig");
  pub const modes = @import("modes.zig");
  pub const osc = @import("osc.zig");
-@@ -83,6 +86,11 @@ pub const formatter_format_buf = formatter.format_buf;
+@@ -84,6 +87,11 @@ pub const formatter_format_buf = formatter.format_buf;
  pub const formatter_format_alloc = formatter.format_alloc;
  pub const formatter_free = formatter.free;
 
@@ -722,7 +722,7 @@ index 562fe40e6..36d3fd03f 100644
  pub const render_state_new = render.new;
  pub const render_state_free = render.free;
  pub const render_state_update = render.update;
-@@ -261,6 +269,7 @@ test {
+@@ -270,6 +278,7 @@ test {
      _ = row;
      _ = focus;
      _ = formatter;
@@ -731,10 +731,10 @@ index 562fe40e6..36d3fd03f 100644
      _ = osc;
      _ = render;
 diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
-index 00bb3b060..066d81b08 100644
+index ffe2ccf4f..12c741f46 100644
 --- a/src/terminal/c/terminal.zig
 +++ b/src/terminal/c/terminal.zig
-@@ -29,6 +29,7 @@ const style_c = @import("style.zig");
+@@ -30,6 +30,7 @@ const style_c = @import("style.zig");
  const color = @import("../color.zig");
  const clipboard = @import("../clipboard.zig");
  const kitty_clipboard = @import("../kitty/clipboard.zig");
@@ -742,7 +742,7 @@ index 00bb3b060..066d81b08 100644
  const c_io = @import("io.zig");
  const snapshot_core = @import("../snapshot/main.zig");
  const Result = @import("result.zig").Result;
-@@ -690,6 +691,10 @@ pub fn zigTerminal(terminal_: Terminal) ?*ZigTerminal {
+@@ -647,6 +648,10 @@ pub fn zigTerminal(terminal_: Terminal) ?*ZigTerminal {
      return (terminal_ orelse return null).terminal;
  }
 
@@ -753,7 +753,7 @@ index 00bb3b060..066d81b08 100644
  /// Attach the persistent C stream and I/O owner to a heap-stable terminal.
  /// The caller retains ownership of both inputs if wrapper allocation fails.
  fn wrap(
-@@ -1591,6 +1596,7 @@ pub const TerminalData = enum(c_int) {
+@@ -1556,6 +1561,7 @@ pub const TerminalData = enum(c_int) {
      vt_ground = 38,
      cursor_at_prompt = 39,
      clipboard_write_max_bytes = 40,
@@ -761,7 +761,7 @@ index 00bb3b060..066d81b08 100644
 
      /// Output type expected for querying the data of the given kind.
      pub fn OutType(comptime self: TerminalData) type {
-@@ -1609,6 +1615,7 @@ pub const TerminalData = enum(c_int) {
+@@ -1574,6 +1580,7 @@ pub const TerminalData = enum(c_int) {
              .kitty_keyboard_flags => u8,
              .scrollbar => TerminalScrollbar,
              .cursor_style => style_c.Style,
@@ -769,7 +769,7 @@ index 00bb3b060..066d81b08 100644
              .title, .pwd => lib.String,
              .total_rows,
              .scrollback_rows,
-@@ -1755,6 +1762,7 @@ fn getTyped(
+@@ -1720,6 +1727,7 @@ fn getTyped(
          ),
          .viewport_active => out.* = t.screens.active.pages.viewport == .active,
          .vt_processing_error => out.* = wrapper.stream.handler.semantic_failure,
@@ -778,7 +778,7 @@ index 00bb3b060..066d81b08 100644
          .scrollback_max_bytes => {
              const max = t.screens.get(.primary).?.pages.limits.bytes.explicit;
 diff --git a/src/terminal/page.zig b/src/terminal/page.zig
-index fba27bdce..d3da7d905 100644
+index ad2b1a7e5..f51ca5e2b 100644
 --- a/src/terminal/page.zig
 +++ b/src/terminal/page.zig
 @@ -2003,7 +2003,8 @@ pub const Capacity = struct {
