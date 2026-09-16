@@ -32,6 +32,8 @@ public interface TerminalViewClient {
 
     boolean shouldEnforceCharBasedInput();
 
+    boolean shouldUseImeInput();
+
     boolean shouldUseCtrlSpaceWorkaround();
 
     boolean isTerminalViewSelected();

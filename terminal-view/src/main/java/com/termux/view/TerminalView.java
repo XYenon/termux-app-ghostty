@@ -432,7 +432,11 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         // initially started with the alternate view or if activity is returned to from another app
         // and the alternate view was the one selected the last time.
         if (mClient.isTerminalViewSelected()) {
-            if (mClient.shouldEnforceCharBasedInput()) {
+            if (mClient.shouldUseImeInput()) {
+                // Advertise a normal text editor so keyboards keep IME composition and candidate
+                // input enabled.
+                outAttrs.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL;
+            } else if (mClient.shouldEnforceCharBasedInput()) {
                 // Some keyboards seems do not reset the internal state on TYPE_NULL.
                 // Affects mostly Samsung stock keyboards.
                 // https://github.com/termux/termux-app/issues/686
@@ -817,9 +821,9 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
     /**
      * Key presses in software keyboards will generally NOT trigger this listener, although some
      * may elect to do so in some situations. Do not rely on this to catch software key presses.
-     * Gboard calls this when shouldEnforceCharBasedInput() is disabled (InputType.TYPE_NULL) instead
-     * of calling commitText(), with deviceId=-1. However, Hacker's Keyboard, OpenBoard, LG Keyboard
-     * call commitText().
+     * Gboard calls this when shouldUseImeInput() and shouldEnforceCharBasedInput() are disabled
+     * (InputType.TYPE_NULL) instead of calling commitText(), with deviceId=-1. However, Hacker's
+     * Keyboard, OpenBoard, LG Keyboard call commitText().
      *
      * This function may also be called directly without android calling it, like by
      * `TerminalExtraKeys` which generates a KeyEvent manually which uses {@link KeyCharacterMap#VIRTUAL_KEYBOARD}
