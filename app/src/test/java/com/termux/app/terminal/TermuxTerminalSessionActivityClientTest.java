@@ -8,11 +8,37 @@ import static org.junit.Assert.fail;
 import org.junit.Test;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
 import java.util.Random;
 
 public class TermuxTerminalSessionActivityClientTest {
+
+    @Test
+    public void findFontFilesUsesLegacyFontThenSortedDirectoryFonts()
+        throws Exception {
+        File root = Files.createTempDirectory("termux-fonts").toFile();
+        File legacy = new File(root, "font.ttf");
+        File directory = new File(root, "fonts");
+        directory.mkdir();
+        File symbols = new File(directory, "20-symbols.otf");
+        File primary = new File(directory, "00-primary.TTF");
+        File collection = new File(directory, "10-cjk.ttc");
+        File ignored = new File(directory, "30-readme.txt");
+        File empty = new File(directory, "40-empty.ttf");
+        Files.write(legacy.toPath(), new byte[]{1});
+        Files.write(symbols.toPath(), new byte[]{1});
+        Files.write(primary.toPath(), new byte[]{1});
+        Files.write(collection.toPath(), new byte[]{1});
+        Files.write(ignored.toPath(), new byte[]{1});
+        empty.createNewFile();
+
+        assertArrayEquals(new File[]{legacy, primary, collection, symbols},
+            TermuxTerminalSessionActivityClient.findFontFiles(
+                legacy, directory));
+    }
 
     @Test
     public void sanitizeOscNotificationTextRemovesControls() {

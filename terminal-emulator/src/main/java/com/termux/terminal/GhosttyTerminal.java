@@ -111,8 +111,13 @@ public final class GhosttyTerminal implements AutoCloseable {
     private boolean mClosePending;
     private int[] mPendingSize;
 
+    public static int[] measureFonts(int textSize, String[] fontPaths) {
+        return nativeMeasureFont(textSize, fontPaths);
+    }
+
     public static int[] measureFont(int textSize, @Nullable String fontPath) {
-        return nativeMeasureFont(textSize, fontPath);
+        return measureFonts(textSize,
+            fontPath == null ? null : new String[]{fontPath});
     }
 
     public GhosttyTerminal(TerminalOutput output, int columns, int rows,
@@ -333,28 +338,40 @@ public final class GhosttyTerminal implements AutoCloseable {
         if (handle != 0) nativeClearSearch(handle);
     }
 
-    public void attachSurface(Surface surface, int width, int height,
-                              int textSize, @Nullable String fontPath) {
+    public void attachSurfaceWithFonts(Surface surface, int width, int height,
+                                       int textSize, String[] fontPaths) {
         waitForClipboardPrompt();
         synchronized (mRendererLock) {
             waitForClipboardPrompt();
             long handle = getHandleIfOpen();
             if (handle == 0) return;
             nativeAttachSurface(handle, surface, width, height,
-                textSize, fontPath);
+                textSize, fontPaths);
         }
     }
 
-    public void resizeSurface(int width, int height, int textSize,
-                              @Nullable String fontPath) {
+    public void attachSurface(Surface surface, int width, int height,
+                              int textSize, @Nullable String fontPath) {
+        attachSurfaceWithFonts(surface, width, height, textSize,
+            fontPath == null ? null : new String[]{fontPath});
+    }
+
+    public void resizeSurfaceWithFonts(int width, int height, int textSize,
+                                       String[] fontPaths) {
         waitForClipboardPrompt();
         synchronized (mRendererLock) {
             waitForClipboardPrompt();
             long handle = getHandleIfOpen();
             if (handle == 0) return;
             nativeResizeSurface(handle, width, height, textSize,
-                fontPath);
+                fontPaths);
         }
+    }
+
+    public void resizeSurface(int width, int height, int textSize,
+                              @Nullable String fontPath) {
+        resizeSurfaceWithFonts(width, height, textSize,
+            fontPath == null ? null : new String[]{fontPath});
     }
 
     public boolean render(boolean cursorVisible) {
@@ -524,7 +541,8 @@ public final class GhosttyTerminal implements AutoCloseable {
                                             int rows, int cellWidthPixels,
                                             int cellHeightPixels,
                                             int transcriptRows);
-    private static native int[] nativeMeasureFont(int textSize, String fontPath);
+    private static native int[] nativeMeasureFont(int textSize,
+                                                  String[] fontPaths);
     private static native void nativeDestroy(long handle);
     private static native void nativeFeed(long handle, byte[] data, int offset,
                                           int count);
@@ -573,10 +591,10 @@ public final class GhosttyTerminal implements AutoCloseable {
     private static native void nativeAttachSurface(long handle, Surface surface,
                                                    int width, int height,
                                                    int textSize,
-                                                   String fontPath);
+                                                   String[] fontPaths);
     private static native void nativeResizeSurface(long handle, int width,
                                                    int height, int textSize,
-                                                   String fontPath);
+                                                   String[] fontPaths);
     private static native boolean nativeRender(long handle,
                                                boolean cursorVisible);
     private static native long nativeTickKittyGraphicsAnimations(

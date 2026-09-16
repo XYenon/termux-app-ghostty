@@ -57,6 +57,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
@@ -1213,7 +1214,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     public void checkForFontAndColors() {
         try {
             File colorsFile = TermuxConstants.TERMUX_COLOR_PROPERTIES_FILE;
-            File fontFile = TermuxConstants.TERMUX_FONT_FILE;
 
             final Properties props = new Properties();
             if (colorsFile.isFile()) {
@@ -1229,11 +1229,31 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             }
             updateBackgroundColor();
 
-            mActivity.getTerminalView().setFontFile(
-                fontFile.exists() && fontFile.length() > 0 ? fontFile : null);
+            mActivity.getTerminalView().setFontFiles(findFontFiles(
+                TermuxConstants.TERMUX_FONT_FILE,
+                TermuxConstants.TERMUX_FONTS_DIR));
         } catch (Exception e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Error in checkForFontAndColors()", e);
         }
+    }
+
+    static File[] findFontFiles(File legacyFont, File fontsDirectory) {
+        List<File> fonts = new ArrayList<>();
+        if (legacyFont.isFile() && legacyFont.length() > 0)
+            fonts.add(legacyFont);
+
+        File[] directoryFonts = fontsDirectory.listFiles(file -> {
+            if (!file.isFile() || file.length() == 0) return false;
+            String name = file.getName().toLowerCase(Locale.ROOT);
+            return name.endsWith(".ttf") || name.endsWith(".otf") ||
+                name.endsWith(".ttc");
+        });
+        if (directoryFonts != null) {
+            Arrays.sort(directoryFonts,
+                (left, right) -> left.getName().compareTo(right.getName()));
+            Collections.addAll(fonts, directoryFonts);
+        }
+        return fonts.toArray(new File[0]);
     }
 
     public void updateBackgroundColor() {

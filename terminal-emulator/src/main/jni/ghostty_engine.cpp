@@ -63,6 +63,48 @@ void release_env(TermuxGhosttyEngine *engine, bool attached) {
     if (attached) engine->vm->DetachCurrentThread();
 }
 
+void throw_illegal_state(JNIEnv *env, const char *message);
+
+bool string_array(JNIEnv *env, jobjectArray values,
+                  std::vector<std::string> *result) {
+    result->clear();
+    if (!values) return true;
+    try {
+        jsize count = env->GetArrayLength(values);
+        if (env->ExceptionCheck()) return false;
+        result->reserve(static_cast<size_t>(count));
+        for (jsize i = 0; i < count; ++i) {
+            auto value = static_cast<jstring>(
+                env->GetObjectArrayElement(values, i));
+            if (env->ExceptionCheck()) return false;
+            if (!value) continue;
+            const char *characters = env->GetStringUTFChars(value, nullptr);
+            if (!characters) {
+                env->DeleteLocalRef(value);
+                if (!env->ExceptionCheck())
+                    throw_illegal_state(env, "Could not read terminal font path");
+                return false;
+            }
+            std::string path;
+            try {
+                path.assign(characters);
+            } catch (...) {
+                env->ReleaseStringUTFChars(value, characters);
+                env->DeleteLocalRef(value);
+                throw;
+            }
+            env->ReleaseStringUTFChars(value, characters);
+            env->DeleteLocalRef(value);
+            result->emplace_back(std::move(path));
+        }
+    } catch (const std::bad_alloc &) {
+        if (!env->ExceptionCheck())
+            throw_illegal_state(env, "Out of memory reading terminal fonts");
+        return false;
+    }
+    return true;
+}
+
 void clear_java_exception(JNIEnv *env, const char *operation) {
     if (!env->ExceptionCheck()) return;
     __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
@@ -1192,27 +1234,30 @@ Java_com_termux_terminal_GhosttyTerminal_nativeCreate(
 
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeMeasureFont(
-    JNIEnv *env, jclass, jint text_size, jstring font_path) {
-    const char *path = font_path
-        ? env->GetStringUTFChars(font_path, nullptr)
-        : nullptr;
-    uint32_t width = 0;
-    uint32_t height = 0;
-    std::string error;
-    bool success = termux_renderer_measure_font(
-        static_cast<uint32_t>(text_size), path, &width, &height, &error);
-    if (path) env->ReleaseStringUTFChars(font_path, path);
-    if (!success) {
-        throw_illegal_state(env, error.c_str());
+    JNIEnv *env, jclass, jint text_size, jobjectArray font_paths) {
+    std::vector<std::string> paths;
+    if (!string_array(env, font_paths, &paths)) return nullptr;
+    try {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        std::string error;
+        bool success = termux_renderer_measure_font(
+            static_cast<uint32_t>(text_size), paths, &width, &height, &error);
+        if (!success) {
+            throw_illegal_state(env, error.c_str());
+            return nullptr;
+        }
+        jint values[] = {
+            static_cast<jint>(width),
+            static_cast<jint>(height),
+        };
+        jintArray result = env->NewIntArray(2);
+        if (result) env->SetIntArrayRegion(result, 0, 2, values);
+        return result;
+    } catch (const std::bad_alloc &) {
+        throw_illegal_state(env, "Out of memory measuring terminal fonts");
         return nullptr;
     }
-    jint values[] = {
-        static_cast<jint>(width),
-        static_cast<jint>(height),
-    };
-    jintArray result = env->NewIntArray(2);
-    if (result) env->SetIntArrayRegion(result, 0, 2, values);
-    return result;
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -2064,43 +2109,50 @@ Java_com_termux_terminal_GhosttyTerminal_nativeGetHyperlink(
 extern "C" JNIEXPORT void JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeAttachSurface(
     JNIEnv *env, jclass, jlong handle, jobject surface, jint width,
-    jint height, jint text_size, jstring font_path) {
+    jint height, jint text_size, jobjectArray font_paths) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
+    std::vector<std::string> paths;
+    if (!string_array(env, font_paths, &paths)) return;
     ANativeWindow *window = ANativeWindow_fromSurface(env, surface);
     if (!window) {
-        throw_illegal_state(env, "Could not acquire Android native window");
+        if (!env->ExceptionCheck())
+            throw_illegal_state(env, "Could not acquire Android native window");
         return;
     }
-    const char *path = font_path
-        ? env->GetStringUTFChars(font_path, nullptr)
-        : nullptr;
-    std::string error;
-    termux_renderer_destroy(engine->renderer);
-    engine->renderer = termux_renderer_create(
-        engine, window, static_cast<uint32_t>(width),
-        static_cast<uint32_t>(height), static_cast<uint32_t>(text_size),
-        path, &error);
-    ANativeWindow_release(window);
-    if (path) env->ReleaseStringUTFChars(font_path, path);
-    if (!engine->renderer) throw_illegal_state(env, error.c_str());
+    try {
+        std::string error;
+        termux_renderer_destroy(engine->renderer);
+        engine->renderer = nullptr;
+        engine->renderer = termux_renderer_create(
+            engine, window, static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height), static_cast<uint32_t>(text_size),
+            paths, &error);
+        ANativeWindow_release(window);
+        if (!engine->renderer) throw_illegal_state(env, error.c_str());
+    } catch (const std::bad_alloc &) {
+        ANativeWindow_release(window);
+        throw_illegal_state(env, "Out of memory attaching terminal surface");
+    }
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeResizeSurface(
     JNIEnv *env, jclass, jlong handle, jint width, jint height,
-    jint text_size, jstring font_path) {
+    jint text_size, jobjectArray font_paths) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
-    const char *path = font_path
-        ? env->GetStringUTFChars(font_path, nullptr)
-        : nullptr;
-    std::string error;
-    bool success = engine->renderer &&
-        termux_renderer_resize(
-            engine->renderer, static_cast<uint32_t>(width),
-            static_cast<uint32_t>(height), static_cast<uint32_t>(text_size),
-            path, &error);
-    if (path) env->ReleaseStringUTFChars(font_path, path);
-    if (!success) throw_illegal_state(env, error.c_str());
+    std::vector<std::string> paths;
+    if (!string_array(env, font_paths, &paths)) return;
+    try {
+        std::string error;
+        bool success = engine->renderer &&
+            termux_renderer_resize(
+                engine->renderer, static_cast<uint32_t>(width),
+                static_cast<uint32_t>(height),
+                static_cast<uint32_t>(text_size), paths, &error);
+        if (!success) throw_illegal_state(env, error.c_str());
+    } catch (const std::bad_alloc &) {
+        throw_illegal_state(env, "Out of memory resizing terminal surface");
+    }
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 struct TermuxGhosttyEngine;
 struct TermuxVulkanRenderer;
@@ -21,7 +22,7 @@ TermuxVulkanRenderer *termux_renderer_create(
     uint32_t width,
     uint32_t height,
     uint32_t text_size,
-    const char *font_path,
+    const std::vector<std::string> &font_paths,
     std::string *error);
 
 bool termux_renderer_resize(
@@ -29,7 +30,7 @@ bool termux_renderer_resize(
     uint32_t width,
     uint32_t height,
     uint32_t text_size,
-    const char *font_path,
+    const std::vector<std::string> &font_paths,
     std::string *error);
 
 TermuxRendererDrawResult termux_renderer_draw(
@@ -41,7 +42,7 @@ void termux_renderer_destroy(TermuxVulkanRenderer *renderer);
 
 bool termux_renderer_measure_font(
     uint32_t text_size,
-    const char *font_path,
+    const std::vector<std::string> &font_paths,
     uint32_t *cell_width,
     uint32_t *cell_height,
     std::string *error);

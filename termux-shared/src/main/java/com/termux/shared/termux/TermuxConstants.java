@@ -771,6 +771,10 @@ public final class TermuxConstants {
     public static final String TERMUX_FONT_FILE_PATH = TERMUX_DATA_HOME_DIR_PATH + "/font.ttf"; // Default: "/data/data/com.termux/files/home/.termux/font.ttf"
     /** Termux app and Termux:Styling font.ttf file */
     public static final File TERMUX_FONT_FILE = new File(TERMUX_FONT_FILE_PATH);
+    /** Directory containing additional terminal fonts, ordered by filename */
+    public static final String TERMUX_FONTS_DIR_PATH = TERMUX_DATA_HOME_DIR_PATH + "/fonts"; // Default: "/data/data/com.termux/files/home/.termux/fonts"
+    /** Directory containing additional terminal fonts */
+    public static final File TERMUX_FONTS_DIR = new File(TERMUX_FONTS_DIR_PATH);
 
 
     /** Termux app and plugins crash log file path */

@@ -7,6 +7,7 @@
 #include <android/log.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_COLOR_H
 #include FT_OUTLINE_H
 #include <hb-ft.h>
 #include <hb.h>
@@ -70,8 +71,10 @@ struct FontSystem {
     FT_Library library = nullptr;
     AFontMatcher *matcher = nullptr;
     std::map<std::string, std::unique_ptr<Face>> faces;
+    std::vector<Face *> custom_faces;
+    Face *primary_face = nullptr;
     uint32_t text_size = 16;
-    std::string custom_path;
+    std::vector<std::string> custom_paths;
     uint32_t cell_width = 8;
     uint32_t cell_height = 18;
     int ascender = 14;
@@ -226,8 +229,11 @@ uint32_t find_memory_type(VkPhysicalDevice physical, uint32_t mask,
 }
 
 bool initialize_fonts(FontSystem *fonts, uint32_t text_size,
-                      const char *font_path, std::string *error) {
+                      const std::vector<std::string> &font_paths,
+                      std::string *error) {
     fonts->faces.clear();
+    fonts->custom_faces.clear();
+    fonts->primary_face = nullptr;
     fonts->text_runs.clear();
     if (fonts->matcher) {
         AFontMatcher_destroy(fonts->matcher);
@@ -243,15 +249,42 @@ bool initialize_fonts(FontSystem *fonts, uint32_t text_size,
         return false;
     }
     fonts->text_size = std::max<uint32_t>(8, text_size);
-    fonts->custom_path = font_path ? font_path : "";
+    fonts->custom_paths = font_paths;
 
-    std::string key = fonts->custom_path.empty() ?
-        std::string("/system/fonts/RobotoMono-Regular.ttf#0") :
-        fonts->custom_path + "#0";
-    auto face = std::make_unique<Face>();
-    if (FT_New_Face(fonts->library,
-                    key.substr(0, key.rfind('#')).c_str(), 0,
-                    &face->ft) != 0) {
+    for (const std::string &path : font_paths) {
+        FT_Face probe = nullptr;
+        if (FT_New_Face(fonts->library, path.c_str(), -1, &probe) != 0)
+            continue;
+        FT_Long face_count = std::max<FT_Long>(1, probe->num_faces);
+        FT_Done_Face(probe);
+        for (FT_Long index = 0; index < face_count; ++index) {
+            auto face = std::make_unique<Face>();
+            if (FT_New_Face(fonts->library, path.c_str(), index,
+                            &face->ft) != 0 ||
+                FT_Set_Pixel_Sizes(face->ft, 0, fonts->text_size) != 0) {
+                continue;
+            }
+            face->hb = hb_ft_font_create_referenced(face->ft);
+            if (!face->hb) continue;
+            std::string key = path + "#" + std::to_string(index);
+            Face *loaded = face.get();
+            auto inserted = fonts->faces.emplace(key, std::move(face));
+            if (!inserted.second) loaded = inserted.first->second.get();
+            fonts->custom_faces.push_back(loaded);
+        }
+    }
+
+    for (Face *face : fonts->custom_faces) {
+        FT_UInt glyph_index = FT_Get_Char_Index(face->ft, 'M');
+        if (glyph_index != 0 &&
+            FT_Load_Glyph(face->ft, glyph_index, FT_LOAD_DEFAULT) == 0 &&
+            face->ft->glyph->advance.x > 0) {
+            fonts->primary_face = face;
+            break;
+        }
+    }
+
+    if (!fonts->primary_face) {
         uint16_t sample = 'M';
         uint32_t run = 0;
         AFont *font = AFontMatcher_match(fonts->matcher, "monospace", &sample,
@@ -262,7 +295,8 @@ bool initialize_fonts(FontSystem *fonts, uint32_t text_size,
         }
         std::string path = AFont_getFontFilePath(font);
         size_t index = AFont_getCollectionIndex(font);
-        key = path + "#" + std::to_string(index);
+        std::string key = path + "#" + std::to_string(index);
+        auto face = std::make_unique<Face>();
         int result = FT_New_Face(fonts->library, path.c_str(),
                                  static_cast<FT_Long>(index), &face->ft);
         AFont_close(font);
@@ -270,32 +304,38 @@ bool initialize_fonts(FontSystem *fonts, uint32_t text_size,
             *error = "FreeType could not open the Android monospace font";
             return false;
         }
-    }
-    FT_Set_Pixel_Sizes(face->ft, 0, fonts->text_size);
-    face->hb = hb_ft_font_create_referenced(face->ft);
-    if (!face->hb) {
-        *error = "HarfBuzz could not create the primary font";
-        return false;
+        if (FT_Set_Pixel_Sizes(face->ft, 0, fonts->text_size) != 0) {
+            *error = "FreeType could not size the Android monospace font";
+            return false;
+        }
+        face->hb = hb_ft_font_create_referenced(face->ft);
+        if (!face->hb) {
+            *error = "HarfBuzz could not create the primary font";
+            return false;
+        }
+        fonts->primary_face = face.get();
+        fonts->faces.emplace(key, std::move(face));
     }
 
-    FT_UInt glyph_index = FT_Get_Char_Index(face->ft, 'M');
-    if (FT_Load_Glyph(face->ft, glyph_index, FT_LOAD_DEFAULT) != 0) {
+    FT_Face primary = fonts->primary_face->ft;
+    FT_UInt glyph_index = FT_Get_Char_Index(primary, 'M');
+    if (FT_Load_Glyph(primary, glyph_index, FT_LOAD_DEFAULT) != 0) {
         *error = "FreeType could not measure the primary font";
         return false;
     }
     fonts->cell_width = std::max<uint32_t>(
-        1, static_cast<uint32_t>((face->ft->glyph->advance.x + 63) / 64));
+        1, static_cast<uint32_t>((primary->glyph->advance.x + 63) / 64));
     fonts->cell_height = std::max<uint32_t>(
         fonts->text_size,
-        static_cast<uint32_t>((face->ft->size->metrics.height + 63) / 64));
+        static_cast<uint32_t>((primary->size->metrics.height + 63) / 64));
     fonts->ascender =
-        static_cast<int>((face->ft->size->metrics.ascender + 63) / 64);
-    fonts->faces.emplace(key, std::move(face));
+        static_cast<int>((primary->size->metrics.ascender + 63) / 64);
     return true;
 }
 
-std::vector<uint16_t> utf8_to_utf16(const uint8_t *bytes, size_t length) {
-    std::vector<uint16_t> result;
+std::vector<uint32_t> utf8_to_codepoints(const uint8_t *bytes,
+                                         size_t length) {
+    std::vector<uint32_t> result;
     for (size_t i = 0; i < length;) {
         uint32_t cp = 0xfffd;
         uint8_t first = bytes[i++];
@@ -316,6 +356,14 @@ std::vector<uint16_t> utf8_to_utf16(const uint8_t *bytes, size_t length) {
                 ((second & 0x3f) << 12) |
                 ((third & 0x3f) << 6) | (fourth & 0x3f);
         }
+        result.push_back(cp);
+    }
+    return result;
+}
+
+std::vector<uint16_t> utf8_to_utf16(const uint8_t *bytes, size_t length) {
+    std::vector<uint16_t> result;
+    for (uint32_t cp : utf8_to_codepoints(bytes, length)) {
         if (cp <= 0xffff) {
             result.push_back(static_cast<uint16_t>(cp));
         } else {
@@ -327,19 +375,133 @@ std::vector<uint16_t> utf8_to_utf16(const uint8_t *bytes, size_t length) {
     return result;
 }
 
+struct TextSupport {
+    bool complete = false;
+    bool colored = false;
+    unsigned int significant_glyph_count = 0;
+};
+
+bool is_variation_selector_cluster(const uint8_t *bytes, size_t length,
+                                   unsigned int cluster) {
+    return cluster + 2 < length && bytes[cluster] == 0xef &&
+        bytes[cluster + 1] == 0xb8 &&
+        (bytes[cluster + 2] == 0x8e || bytes[cluster + 2] == 0x8f);
+}
+
+TextSupport inspect_text_support(Face *face, const uint8_t *bytes,
+                                 size_t length) {
+    TextSupport result;
+    hb_buffer_t *buffer = hb_buffer_create();
+    hb_buffer_add_utf8(buffer, reinterpret_cast<const char *>(bytes), length,
+                       0, length);
+    hb_buffer_set_cluster_level(
+        buffer, HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
+    hb_buffer_guess_segment_properties(buffer);
+    hb_shape(face->hb, buffer, nullptr, 0);
+    unsigned int count = 0;
+    hb_glyph_info_t *infos = hb_buffer_get_glyph_infos(buffer, &count);
+    result.complete = count > 0;
+    for (unsigned int i = 0; i < count && result.complete; ++i) {
+        FT_OpaquePaint paint{};
+        bool has_colrv1 = infos[i].codepoint != 0 &&
+            FT_Get_Color_Glyph_Paint(
+                face->ft, infos[i].codepoint,
+                FT_COLOR_INCLUDE_ROOT_TRANSFORM, &paint);
+        result.complete = infos[i].codepoint != 0 &&
+            FT_Load_Glyph(face->ft, infos[i].codepoint,
+                          FT_LOAD_DEFAULT | FT_LOAD_COLOR) == 0 &&
+            FT_Render_Glyph(face->ft->glyph, FT_RENDER_MODE_NORMAL) == 0;
+        if (!result.complete) break;
+
+        const FT_Bitmap &bitmap = face->ft->glyph->bitmap;
+        bool empty = bitmap.width == 0 || bitmap.rows == 0 || !bitmap.buffer;
+        if (has_colrv1 && empty) {
+            result.complete = false;
+            break;
+        }
+        if (!empty && bitmap.pixel_mode == FT_PIXEL_MODE_BGRA) {
+            result.colored = true;
+        }
+        if (!empty ||
+            !is_variation_selector_cluster(bytes, length, infos[i].cluster)) {
+            ++result.significant_glyph_count;
+        }
+    }
+    hb_buffer_destroy(buffer);
+    return result;
+}
+
+bool contains_codepoint(const std::vector<uint32_t> &codepoints,
+                        uint32_t expected) {
+    return std::find(codepoints.begin(), codepoints.end(), expected) !=
+        codepoints.end();
+}
+
+bool requires_emoji_ligature(const std::vector<uint32_t> &codepoints) {
+    unsigned int regional_indicators = 0;
+    for (uint32_t cp : codepoints) {
+        if (cp == 0x200d || cp == 0x20e3 ||
+            (cp >= 0x1f3fb && cp <= 0x1f3ff) ||
+            (cp >= 0xe0020 && cp <= 0xe007f)) {
+            return true;
+        }
+        if (cp >= 0x1f1e6 && cp <= 0x1f1ff) ++regional_indicators;
+    }
+    return regional_indicators >= 2;
+}
+
+bool supports_emoji_variation(Face *face,
+                              const std::vector<uint32_t> &codepoints,
+                              uint32_t selector) {
+    for (size_t i = 1; i < codepoints.size(); ++i) {
+        if (codepoints[i] == selector &&
+            FT_Face_GetCharVariantIndex(
+                face->ft, codepoints[i - 1], selector) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool face_supports_text(Face *face, const uint8_t *bytes, size_t length,
+                        const std::vector<uint32_t> &codepoints) {
+    TextSupport support = inspect_text_support(face, bytes, length);
+    if (!support.complete) return false;
+
+    for (uint32_t cp : codepoints) {
+        if (cp >= 0xe0020 && cp <= 0xe007f &&
+            FT_Get_Char_Index(face->ft, cp) == 0) {
+            return false;
+        }
+    }
+
+    bool emoji_presentation = contains_codepoint(codepoints, 0xfe0f);
+    if (emoji_presentation && !support.colored &&
+        !supports_emoji_variation(face, codepoints, 0xfe0f)) {
+        return false;
+    }
+    if (contains_codepoint(codepoints, 0xfe0e) && support.colored)
+        return false;
+    return !requires_emoji_ligature(codepoints) ||
+        support.significant_glyph_count == 1;
+}
+
 Face *face_for_text(FontSystem *fonts, const uint8_t *bytes, size_t length,
                     bool bold, bool italic) {
-    if (!fonts->custom_path.empty()) return fonts->faces.begin()->second.get();
+    std::vector<uint32_t> codepoints = utf8_to_codepoints(bytes, length);
+    for (Face *face : fonts->custom_faces) {
+        if (face_supports_text(face, bytes, length, codepoints)) return face;
+    }
 
     std::vector<uint16_t> utf16 = utf8_to_utf16(bytes, length);
-    if (utf16.empty()) return fonts->faces.begin()->second.get();
+    if (utf16.empty()) return fonts->primary_face;
     AFontMatcher_setStyle(fonts->matcher,
                           bold ? AFONT_WEIGHT_BOLD : AFONT_WEIGHT_NORMAL,
                           italic);
     uint32_t run = 0;
     AFont *font = AFontMatcher_match(fonts->matcher, "monospace", utf16.data(),
                                      utf16.size(), &run);
-    if (!font) return fonts->faces.begin()->second.get();
+    if (!font) return fonts->primary_face;
     std::string path = AFont_getFontFilePath(font);
     size_t index = AFont_getCollectionIndex(font);
     std::string key = path + "#" + std::to_string(index) +
@@ -354,12 +516,12 @@ Face *face_for_text(FontSystem *fonts, const uint8_t *bytes, size_t length,
     if (FT_New_Face(fonts->library, path.c_str(),
                     static_cast<FT_Long>(index), &face->ft) != 0) {
         AFont_close(font);
-        return fonts->faces.begin()->second.get();
+        return fonts->primary_face;
     }
     AFont_close(font);
     FT_Set_Pixel_Sizes(face->ft, 0, fonts->text_size);
     face->hb = hb_ft_font_create_referenced(face->ft);
-    if (!face->hb) return fonts->faces.begin()->second.get();
+    if (!face->hb) return fonts->primary_face;
     Face *result = face.get();
     fonts->faces.emplace(key, std::move(face));
     return result;
@@ -1797,32 +1959,38 @@ TermuxRendererDrawResult upload_frame(TermuxVulkanRenderer *renderer,
 
 TermuxVulkanRenderer *termux_renderer_create(
     TermuxGhosttyEngine *engine, ANativeWindow *window, uint32_t width,
-    uint32_t height, uint32_t text_size, const char *font_path,
+    uint32_t height, uint32_t text_size,
+    const std::vector<std::string> &font_paths,
     std::string *error) {
     auto renderer = std::make_unique<TermuxVulkanRenderer>();
     renderer->engine = engine;
     renderer->window = window;
     ANativeWindow_acquire(window);
-    renderer->requested_width = width;
-    renderer->requested_height = height;
-    if (!initialize_fonts(&renderer->fonts, text_size, font_path, error) ||
-        !initialize_vulkan(renderer.get(), error)) {
+    try {
+        renderer->requested_width = width;
+        renderer->requested_height = height;
+        if (initialize_fonts(&renderer->fonts, text_size, font_paths, error) &&
+            initialize_vulkan(renderer.get(), error)) {
+            return renderer.release();
+        }
         termux_renderer_destroy(renderer.release());
         return nullptr;
+    } catch (...) {
+        termux_renderer_destroy(renderer.release());
+        throw;
     }
-    return renderer.release();
 }
 
 bool termux_renderer_resize(TermuxVulkanRenderer *renderer, uint32_t width,
                             uint32_t height, uint32_t text_size,
-                            const char *font_path, std::string *error) {
+                            const std::vector<std::string> &font_paths,
+                            std::string *error) {
     renderer->requested_width = width;
     renderer->requested_height = height;
     vkDeviceWaitIdle(renderer->device);
     if (text_size != renderer->fonts.text_size ||
-        std::string(font_path ? font_path : "") !=
-            renderer->fonts.custom_path) {
-        if (!initialize_fonts(&renderer->fonts, text_size, font_path, error))
+        font_paths != renderer->fonts.custom_paths) {
+        if (!initialize_fonts(&renderer->fonts, text_size, font_paths, error))
             return false;
         renderer->glyphs.clear();
         renderer->frame_initialized = false;
@@ -1892,12 +2060,11 @@ void termux_renderer_destroy(TermuxVulkanRenderer *renderer) {
     delete renderer;
 }
 
-bool termux_renderer_measure_font(uint32_t text_size, const char *font_path,
-                                  uint32_t *cell_width,
-                                  uint32_t *cell_height,
-                                  std::string *error) {
+bool termux_renderer_measure_font(
+    uint32_t text_size, const std::vector<std::string> &font_paths,
+    uint32_t *cell_width, uint32_t *cell_height, std::string *error) {
     FontSystem fonts;
-    if (!initialize_fonts(&fonts, text_size, font_path, error)) return false;
+    if (!initialize_fonts(&fonts, text_size, font_paths, error)) return false;
     *cell_width = fonts.cell_width;
     *cell_height = fonts.cell_height;
     return true;

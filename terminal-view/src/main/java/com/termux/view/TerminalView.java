@@ -44,6 +44,7 @@ import com.termux.terminal.TerminalSession;
 import com.termux.view.textselection.TextSelectionCursorController;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -66,7 +67,7 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
     private int mTextSize = 14;
     private int mCellWidth = 8;
     private int mCellHeight = 18;
-    private File mFontFile;
+    private File[] mFontFiles = new File[0];
     private boolean mSurfaceReady;
     private boolean mSurfaceAttached;
     private boolean mCursorVisible = true;
@@ -616,18 +617,29 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         updateSize();
     }
 
-    public void setFontFile(@Nullable File fontFile) {
-        mFontFile = fontFile;
+    public void setFontFiles(File[] fontFiles) {
+        mFontFiles = fontFiles == null
+            ? new File[0] : Arrays.copyOf(fontFiles, fontFiles.length);
         updateFontMetrics();
         updateSize();
         requestRender();
     }
 
+    public void setFontFile(@Nullable File fontFile) {
+        setFontFiles(fontFile == null ? null : new File[]{fontFile});
+    }
+
     private void updateFontMetrics() {
-        int[] metrics = GhosttyTerminal.measureFont(mTextSize,
-            mFontFile == null ? null : mFontFile.getAbsolutePath());
+        int[] metrics = GhosttyTerminal.measureFonts(mTextSize, getFontPaths());
         mCellWidth = Math.max(1, metrics[0]);
         mCellHeight = Math.max(1, metrics[1]);
+    }
+
+    private String[] getFontPaths() {
+        String[] paths = new String[mFontFiles.length];
+        for (int i = 0; i < mFontFiles.length; i++)
+            paths[i] = mFontFiles[i].getAbsolutePath();
+        return paths;
     }
 
     @Override
@@ -1322,18 +1334,17 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
                 final int width = viewWidth;
                 final int height = viewHeight;
                 final int textSize = mTextSize;
-                final String fontPath = mFontFile == null
-                    ? null : mFontFile.getAbsolutePath();
+                final String[] fontPaths = getFontPaths();
                 final boolean attach = !mSurfaceAttached;
                 mSurfaceAttached = true;
                 submitRenderTask(() -> {
                     try {
                         if (attach) {
-                            terminal.attachSurface(surface, width, height,
-                                textSize, fontPath);
+                            terminal.attachSurfaceWithFonts(surface, width,
+                                height, textSize, fontPaths);
                         } else {
-                            terminal.resizeSurface(width, height, textSize,
-                                fontPath);
+                            terminal.resizeSurfaceWithFonts(width, height,
+                                textSize, fontPaths);
                         }
                         terminal.render(mCursorVisible);
                     } catch (RuntimeException e) {
