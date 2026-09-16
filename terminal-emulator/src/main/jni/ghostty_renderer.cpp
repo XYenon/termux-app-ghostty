@@ -56,10 +56,12 @@ struct TextRunKey {
     std::string text;
     bool bold = false;
     bool italic = false;
+    uint32_t cell_columns = 1;
 
     bool operator<(const TextRunKey &other) const {
-        return std::tie(text, bold, italic) <
-            std::tie(other.text, other.bold, other.italic);
+        return std::tie(text, bold, italic, cell_columns) <
+            std::tie(other.text, other.bold, other.italic,
+                     other.cell_columns);
     }
 };
 
@@ -711,7 +713,8 @@ void fill_rect(std::vector<uint8_t> *frame, uint32_t width, uint32_t height,
 }
 
 CachedTextRun load_text_run(FontSystem *fonts, const uint8_t *bytes,
-                            size_t length, const GhosttyStyle &style) {
+                            size_t length, const GhosttyStyle &style,
+                            uint32_t cell_columns) {
     CachedTextRun result;
     Face *face = face_for_text(fonts, bytes, length, style.bold, style.italic);
     hb_buffer_t *buffer = hb_buffer_create();
@@ -728,7 +731,7 @@ CachedTextRun load_text_run(FontSystem *fonts, const uint8_t *bytes,
     for (unsigned int i = 0; i < count; ++i) {
         CachedTextGlyph glyph;
         if (render_color_glyph(face, infos[i].codepoint, &glyph)) {
-            fit_colored_glyph(&glyph, fonts->cell_width * 2,
+            fit_colored_glyph(&glyph, fonts->cell_width * cell_columns,
                               fonts->cell_height);
             glyph.x += pen_x + positions[i].x_offset / 64;
             glyph.y += pen_y - positions[i].y_offset / 64;
@@ -759,7 +762,7 @@ CachedTextRun load_text_run(FontSystem *fonts, const uint8_t *bytes,
                 static_cast<size_t>(row) * glyph.width * bytes_per_pixel;
             memcpy(destination, source, glyph.width * bytes_per_pixel);
         }
-        fit_colored_glyph(&glyph, fonts->cell_width * 2,
+        fit_colored_glyph(&glyph, fonts->cell_width * cell_columns,
                           fonts->cell_height);
         glyph.x += pen_x + positions[i].x_offset / 64;
         glyph.y += pen_y - positions[i].y_offset / 64;
@@ -820,9 +823,11 @@ void draw_text_run(const CachedTextRun &run, std::vector<uint8_t> *frame,
 void draw_text(FontSystem *fonts, std::vector<uint8_t> *frame,
                uint32_t width, uint32_t height, const uint8_t *bytes,
                size_t length, int cell_x, int cell_y,
-               GhosttyColorRgb color, const GhosttyStyle &style) {
+               GhosttyColorRgb color, const GhosttyStyle &style,
+               uint32_t cell_columns) {
     if (length > TEXT_RUN_CACHE_MAX_KEY_BYTES) {
-        CachedTextRun run = load_text_run(fonts, bytes, length, style);
+        CachedTextRun run = load_text_run(fonts, bytes, length, style,
+                                          cell_columns);
         draw_text_run(run, frame, width, height,
                       cell_x * static_cast<int>(fonts->cell_width), cell_y,
                       color);
@@ -833,13 +838,15 @@ void draw_text(FontSystem *fonts, std::vector<uint8_t> *frame,
         std::string(reinterpret_cast<const char *>(bytes), length),
         style.bold,
         style.italic,
+        cell_columns,
     };
     auto found = fonts->text_runs.find(key);
     if (found == fonts->text_runs.end()) {
         if (fonts->text_runs.size() >= TEXT_RUN_CACHE_MAX_ENTRIES)
             fonts->text_runs.clear();
         found = fonts->text_runs.emplace(
-            std::move(key), load_text_run(fonts, bytes, length, style)).first;
+            std::move(key),
+            load_text_run(fonts, bytes, length, style, cell_columns)).first;
     }
     draw_text_run(found->second, frame, width, height,
                   cell_x * static_cast<int>(fonts->cell_width), cell_y,
@@ -1148,10 +1155,16 @@ void draw_cell_content(TermuxVulkanRenderer *renderer, const RenderCell &cell,
             draw_glyph(&renderer->frame, renderer->extent.width,
                        renderer->extent.height, *glyph, left, top, color);
         } else {
+            // Fit colored glyphs to the columns the cell actually occupies so
+            // narrow cells (e.g. pieces of emoji split by legacy input) do
+            // not overflow into the following cell.
+            uint32_t cell_columns =
+                cell.wide == GHOSTTY_CELL_WIDE_WIDE ? 2u : 1u;
             draw_text(&renderer->fonts, &renderer->frame,
                       renderer->extent.width, renderer->extent.height,
                       reinterpret_cast<const uint8_t *>(cell.text.data()),
-                      cell.text.size(), cell.column, top, color, cell.style);
+                      cell.text.size(), cell.column, top, color, cell.style,
+                      cell_columns);
         }
     }
     if (cell.style.underline != 0) {

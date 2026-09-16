@@ -1193,6 +1193,23 @@ Java_com_termux_terminal_GhosttyTerminal_nativeCreate(
         return 0;
     }
 
+    // Default grapheme clustering (private mode 2027) to enabled so
+    // multi-codepoint emoji such as 🏳️‍⚧️ are stored as a single cell and can
+    // render as one glyph. Applications can still toggle it via CSI ?2027 h/l,
+    // and a full reset (RIS) restores this configured default.
+    const GhosttyTerminalModeConfig grapheme_cluster_mode{
+        GHOSTTY_MODE_GRAPHEME_CLUSTER,
+        true,
+    };
+    if (ghostty_terminal_set(engine->terminal,
+                             GHOSTTY_TERMINAL_OPT_MODE_DEFAULT,
+                             &grapheme_cluster_mode) != GHOSTTY_SUCCESS) {
+        destroy_engine(env, engine);
+        throw_illegal_state(env,
+                            "Could not enable grapheme cluster mode");
+        return 0;
+    }
+
     ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_USERDATA,
                          engine);
     ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
