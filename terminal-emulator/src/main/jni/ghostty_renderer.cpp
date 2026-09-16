@@ -10,7 +10,9 @@
 #include FT_COLOR_H
 #include FT_OUTLINE_H
 #include <hb-ft.h>
+#include <hb-ot.h>
 #include <hb.h>
+#include <hb-raster.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_android.h>
 
@@ -36,8 +38,15 @@ constexpr size_t TEXT_RUN_CACHE_MAX_KEY_BYTES = 64;
 struct Face {
     FT_Face ft = nullptr;
     hb_font_t *hb = nullptr;
+    hb_face_t *paint_face = nullptr;
+    hb_font_t *paint_font = nullptr;
+    hb_raster_paint_t *raster = nullptr;
+    bool has_color = false;
 
     ~Face() {
+        if (raster) hb_raster_paint_destroy(raster);
+        if (paint_font) hb_font_destroy(paint_font);
+        if (paint_face) hb_face_destroy(paint_face);
         if (hb) hb_font_destroy(hb);
         if (ft) FT_Done_Face(ft);
     }
@@ -60,6 +69,7 @@ struct CachedTextGlyph {
     uint32_t width = 0;
     uint32_t height = 0;
     bool colored = false;
+    bool premultiplied = false;
     std::vector<uint8_t> pixels;
 };
 
@@ -228,6 +238,145 @@ uint32_t find_memory_type(VkPhysicalDevice physical, uint32_t mask,
     return UINT32_MAX;
 }
 
+bool set_face_size(FT_Face face, uint32_t text_size) {
+    if (FT_IS_SCALABLE(face))
+        return FT_Set_Pixel_Sizes(face, 0, text_size) == 0;
+    if (!FT_HAS_FIXED_SIZES(face) || face->num_fixed_sizes <= 0) return false;
+
+    FT_Int best = 0;
+    FT_Long best_distance = LONG_MAX;
+    for (FT_Int i = 0; i < face->num_fixed_sizes; ++i) {
+        FT_Long pixels = (face->available_sizes[i].y_ppem + 32) / 64;
+        FT_Long distance = std::abs(pixels - static_cast<FT_Long>(text_size));
+        if (distance < best_distance) {
+            best = i;
+            best_distance = distance;
+        }
+    }
+    return FT_Select_Size(face, best) == 0;
+}
+
+bool initialize_face(Face *face, const std::string &path, FT_Long face_index,
+                     uint32_t text_size) {
+    if (!set_face_size(face->ft, text_size)) return false;
+    face->hb = hb_ft_font_create_referenced(face->ft);
+    if (!face->hb) return false;
+    hb_font_set_scale(face->hb, static_cast<int>(text_size * 64),
+                      static_cast<int>(text_size * 64));
+    face->paint_face = hb_face_create_from_file_or_fail(
+        path.c_str(), static_cast<unsigned int>(face_index));
+    if (!face->paint_face) return false;
+    face->paint_font = hb_font_create(face->paint_face);
+    if (!face->paint_font) return false;
+    hb_font_set_scale(face->paint_font, static_cast<int>(text_size * 64),
+                      static_cast<int>(text_size * 64));
+    face->has_color = hb_ot_color_has_paint(face->paint_face) ||
+        hb_ot_color_has_layers(face->paint_face) ||
+        hb_ot_color_has_png(face->paint_face);
+    if (!face->has_color) return true;
+    face->raster = hb_raster_paint_create_or_fail();
+    if (!face->raster) return false;
+    hb_raster_paint_set_scale_factor(face->raster, 64.0f, 64.0f);
+    hb_raster_paint_set_palette(face->raster, 0);
+    hb_raster_paint_set_foreground(
+        face->raster, HB_COLOR(255, 255, 255, 255));
+    return true;
+}
+
+bool render_color_glyph(Face *face, hb_codepoint_t glyph_index,
+                        CachedTextGlyph *glyph) {
+    if (!face->has_color || !face->raster) return false;
+    hb_glyph_extents_t glyph_extents{};
+    if (!hb_font_get_glyph_extents(
+            face->paint_font, glyph_index, &glyph_extents) ||
+        !hb_raster_paint_set_glyph_extents(face->raster, &glyph_extents)) {
+        hb_raster_paint_clear(face->raster);
+        return false;
+    }
+    if (!hb_raster_paint_glyph_or_fail(
+            face->raster, face->paint_font, glyph_index)) {
+        hb_raster_paint_clear(face->raster);
+        return false;
+    }
+
+    hb_raster_image_t *image = hb_raster_paint_render(face->raster);
+    if (!image) return false;
+    hb_raster_extents_t extents{};
+    hb_raster_image_get_extents(image, &extents);
+    const uint8_t *buffer = hb_raster_image_get_buffer(image);
+    bool rendered = buffer && extents.width > 0 && extents.height > 0;
+    if (rendered && glyph) {
+        glyph->x = extents.x_origin;
+        glyph->y = -(extents.y_origin + static_cast<int>(extents.height));
+        glyph->width = extents.width;
+        glyph->height = extents.height;
+        glyph->colored = true;
+        glyph->premultiplied = true;
+        glyph->pixels.resize(
+            static_cast<size_t>(extents.width) * extents.height * 4);
+        for (uint32_t row = 0; row < extents.height; ++row) {
+            const uint8_t *source = buffer +
+                static_cast<size_t>(extents.height - 1 - row) *
+                extents.stride;
+            uint8_t *destination = glyph->pixels.data() +
+                static_cast<size_t>(row) * extents.width * 4;
+            memcpy(destination, source, static_cast<size_t>(extents.width) * 4);
+        }
+    }
+    hb_raster_paint_recycle_image(face->raster, image);
+    return rendered;
+}
+
+void fit_colored_glyph(CachedTextGlyph *glyph, uint32_t max_width,
+                       uint32_t max_height) {
+    if (!glyph->colored || glyph->width == 0 || glyph->height == 0 ||
+        (glyph->width <= max_width && glyph->height <= max_height)) return;
+
+    double scale = std::min(
+        static_cast<double>(max_width) / glyph->width,
+        static_cast<double>(max_height) / glyph->height);
+    uint32_t width = std::max<uint32_t>(
+        1, static_cast<uint32_t>(std::lround(glyph->width * scale)));
+    uint32_t height = std::max<uint32_t>(
+        1, static_cast<uint32_t>(std::lround(glyph->height * scale)));
+    std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4);
+    for (uint32_t y = 0; y < height; ++y) {
+        double source_y = (y + 0.5) / scale - 0.5;
+        uint32_t y0 = static_cast<uint32_t>(
+            std::clamp(std::floor(source_y), 0.0,
+                       static_cast<double>(glyph->height - 1)));
+        uint32_t y1 = std::min(y0 + 1, glyph->height - 1);
+        double fy = std::clamp(source_y - y0, 0.0, 1.0);
+        for (uint32_t x = 0; x < width; ++x) {
+            double source_x = (x + 0.5) / scale - 0.5;
+            uint32_t x0 = static_cast<uint32_t>(
+                std::clamp(std::floor(source_x), 0.0,
+                           static_cast<double>(glyph->width - 1)));
+            uint32_t x1 = std::min(x0 + 1, glyph->width - 1);
+            double fx = std::clamp(source_x - x0, 0.0, 1.0);
+            for (size_t channel = 0; channel < 4; ++channel) {
+                auto sample = [&](uint32_t sx, uint32_t sy) {
+                    return glyph->pixels[
+                        (static_cast<size_t>(sy) * glyph->width + sx) * 4 +
+                        channel];
+                };
+                double top = sample(x0, y0) * (1.0 - fx) +
+                    sample(x1, y0) * fx;
+                double bottom = sample(x0, y1) * (1.0 - fx) +
+                    sample(x1, y1) * fx;
+                pixels[(static_cast<size_t>(y) * width + x) * 4 + channel] =
+                    static_cast<uint8_t>(std::lround(
+                        top * (1.0 - fy) + bottom * fy));
+            }
+        }
+    }
+    glyph->x = static_cast<int>(std::lround(glyph->x * scale));
+    glyph->y = static_cast<int>(std::lround(glyph->y * scale));
+    glyph->width = width;
+    glyph->height = height;
+    glyph->pixels = std::move(pixels);
+}
+
 bool initialize_fonts(FontSystem *fonts, uint32_t text_size,
                       const std::vector<std::string> &font_paths,
                       std::string *error) {
@@ -261,11 +410,9 @@ bool initialize_fonts(FontSystem *fonts, uint32_t text_size,
             auto face = std::make_unique<Face>();
             if (FT_New_Face(fonts->library, path.c_str(), index,
                             &face->ft) != 0 ||
-                FT_Set_Pixel_Sizes(face->ft, 0, fonts->text_size) != 0) {
+                !initialize_face(face.get(), path, index, fonts->text_size)) {
                 continue;
             }
-            face->hb = hb_ft_font_create_referenced(face->ft);
-            if (!face->hb) continue;
             std::string key = path + "#" + std::to_string(index);
             Face *loaded = face.get();
             auto inserted = fonts->faces.emplace(key, std::move(face));
@@ -304,13 +451,9 @@ bool initialize_fonts(FontSystem *fonts, uint32_t text_size,
             *error = "FreeType could not open the Android monospace font";
             return false;
         }
-        if (FT_Set_Pixel_Sizes(face->ft, 0, fonts->text_size) != 0) {
+        if (!initialize_face(face.get(), path, static_cast<FT_Long>(index),
+                             fonts->text_size)) {
             *error = "FreeType could not size the Android monospace font";
-            return false;
-        }
-        face->hb = hb_ft_font_create_referenced(face->ft);
-        if (!face->hb) {
-            *error = "HarfBuzz could not create the primary font";
             return false;
         }
         fonts->primary_face = face.get();
@@ -402,27 +545,26 @@ TextSupport inspect_text_support(Face *face, const uint8_t *bytes,
     hb_glyph_info_t *infos = hb_buffer_get_glyph_infos(buffer, &count);
     result.complete = count > 0;
     for (unsigned int i = 0; i < count && result.complete; ++i) {
-        FT_OpaquePaint paint{};
-        bool has_colrv1 = infos[i].codepoint != 0 &&
-            FT_Get_Color_Glyph_Paint(
-                face->ft, infos[i].codepoint,
-                FT_COLOR_INCLUDE_ROOT_TRANSFORM, &paint);
-        result.complete = infos[i].codepoint != 0 &&
-            FT_Load_Glyph(face->ft, infos[i].codepoint,
-                          FT_LOAD_DEFAULT | FT_LOAD_COLOR) == 0 &&
-            FT_Render_Glyph(face->ft->glyph, FT_RENDER_MODE_NORMAL) == 0;
+        if (infos[i].codepoint == 0) {
+            result.complete = false;
+            break;
+        }
+
+        bool color_rendered =
+            render_color_glyph(face, infos[i].codepoint, nullptr);
+        result.complete = color_rendered ||
+            (FT_Load_Glyph(face->ft, infos[i].codepoint,
+                           FT_LOAD_DEFAULT | FT_LOAD_COLOR) == 0 &&
+             FT_Render_Glyph(face->ft->glyph, FT_RENDER_MODE_NORMAL) == 0);
         if (!result.complete) break;
 
         const FT_Bitmap &bitmap = face->ft->glyph->bitmap;
         bool empty = bitmap.width == 0 || bitmap.rows == 0 || !bitmap.buffer;
-        if (has_colrv1 && empty) {
-            result.complete = false;
-            break;
-        }
-        if (!empty && bitmap.pixel_mode == FT_PIXEL_MODE_BGRA) {
+        if (color_rendered ||
+            (!empty && bitmap.pixel_mode == FT_PIXEL_MODE_BGRA)) {
             result.colored = true;
         }
-        if (!empty ||
+        if (color_rendered || !empty ||
             !is_variation_selector_cluster(bytes, length, infos[i].cluster)) {
             ++result.significant_glyph_count;
         }
@@ -519,9 +661,9 @@ Face *face_for_text(FontSystem *fonts, const uint8_t *bytes, size_t length,
         return fonts->primary_face;
     }
     AFont_close(font);
-    FT_Set_Pixel_Sizes(face->ft, 0, fonts->text_size);
-    face->hb = hb_ft_font_create_referenced(face->ft);
-    if (!face->hb) return fonts->primary_face;
+    if (!initialize_face(face.get(), path, static_cast<FT_Long>(index),
+                         fonts->text_size))
+        return fonts->primary_face;
     Face *result = face.get();
     fonts->faces.emplace(key, std::move(face));
     return result;
@@ -584,19 +726,28 @@ CachedTextRun load_text_run(FontSystem *fonts, const uint8_t *bytes,
     int pen_x = 0;
     int pen_y = fonts->ascender;
     for (unsigned int i = 0; i < count; ++i) {
+        CachedTextGlyph glyph;
+        if (render_color_glyph(face, infos[i].codepoint, &glyph)) {
+            fit_colored_glyph(&glyph, fonts->cell_width * 2,
+                              fonts->cell_height);
+            glyph.x += pen_x + positions[i].x_offset / 64;
+            glyph.y += pen_y - positions[i].y_offset / 64;
+            result.glyphs.emplace_back(std::move(glyph));
+            pen_x += positions[i].x_advance / 64;
+            pen_y -= positions[i].y_advance / 64;
+            continue;
+        }
         if (FT_Load_Glyph(face->ft, infos[i].codepoint,
                           FT_LOAD_DEFAULT | FT_LOAD_COLOR) != 0) continue;
         if (FT_Render_Glyph(face->ft->glyph, FT_RENDER_MODE_NORMAL) != 0)
             continue;
-        CachedTextGlyph glyph;
-        glyph.x = pen_x + positions[i].x_offset / 64 +
-            face->ft->glyph->bitmap_left;
-        glyph.y = pen_y - positions[i].y_offset / 64 -
-            face->ft->glyph->bitmap_top;
+        glyph.x = face->ft->glyph->bitmap_left;
+        glyph.y = -face->ft->glyph->bitmap_top;
         const FT_Bitmap &bitmap = face->ft->glyph->bitmap;
         glyph.width = bitmap.width;
         glyph.height = bitmap.rows;
         glyph.colored = bitmap.pixel_mode == FT_PIXEL_MODE_BGRA;
+        glyph.premultiplied = glyph.colored;
         size_t bytes_per_pixel = glyph.colored ? 4 : 1;
         glyph.pixels.resize(
             static_cast<size_t>(glyph.width) * glyph.height *
@@ -608,6 +759,10 @@ CachedTextRun load_text_run(FontSystem *fonts, const uint8_t *bytes,
                 static_cast<size_t>(row) * glyph.width * bytes_per_pixel;
             memcpy(destination, source, glyph.width * bytes_per_pixel);
         }
+        fit_colored_glyph(&glyph, fonts->cell_width * 2,
+                          fonts->cell_height);
+        glyph.x += pen_x + positions[i].x_offset / 64;
+        glyph.y += pen_y - positions[i].y_offset / 64;
         result.glyphs.emplace_back(std::move(glyph));
         pen_x += positions[i].x_advance / 64;
         pen_y -= positions[i].y_advance / 64;
@@ -631,8 +786,28 @@ void draw_text_run(const CachedTextRun &run, std::vector<uint8_t> *frame,
                     GhosttyColorRgb pixel{glyph.pixels[index + 2],
                                           glyph.pixels[index + 1],
                                           glyph.pixels[index]};
-                    put_pixel(frame, width, height, x + column, y + row,
-                              pixel, glyph.pixels[index + 3]);
+                    uint8_t alpha = glyph.pixels[index + 3];
+                    if (glyph.premultiplied) {
+                        int target_x = x + static_cast<int>(column);
+                        int target_y = y + static_cast<int>(row);
+                        if (target_x < 0 || target_y < 0 ||
+                            target_x >= static_cast<int>(width) ||
+                            target_y >= static_cast<int>(height)) continue;
+                        size_t target =
+                            (static_cast<size_t>(target_y) * width + target_x) *
+                            4;
+                        uint32_t inv = 255 - alpha;
+                        (*frame)[target] = static_cast<uint8_t>(
+                            pixel.r + (*frame)[target] * inv / 255);
+                        (*frame)[target + 1] = static_cast<uint8_t>(
+                            pixel.g + (*frame)[target + 1] * inv / 255);
+                        (*frame)[target + 2] = static_cast<uint8_t>(
+                            pixel.b + (*frame)[target + 2] * inv / 255);
+                        (*frame)[target + 3] = 255;
+                    } else {
+                        put_pixel(frame, width, height, x + column, y + row,
+                                  pixel, alpha);
+                    }
                 } else {
                     put_pixel(frame, width, height, x + column, y + row,
                               color, glyph.pixels[index]);
@@ -848,8 +1023,8 @@ CachedGlyph load_glyph(TermuxVulkanRenderer *renderer, uint32_t codepoint) {
         static_cast<size_t>(result.width) * result.height, 0);
     if (info.units_per_em == 0 || info.advance_width == 0 ||
         info.line_height == 0 || info.contour_count == 0 ||
-        info.point_count == 0 || info.contour_count > SHRT_MAX ||
-        info.point_count > SHRT_MAX) return result;
+        info.point_count == 0 || info.contour_count > USHRT_MAX ||
+        info.point_count > USHRT_MAX) return result;
 
     std::vector<uint16_t> contour_indices(info.contour_count);
     std::vector<GhosttyGlyphPoint> source_points(info.point_count);
@@ -901,8 +1076,8 @@ CachedGlyph load_glyph(TermuxVulkanRenderer *renderer, uint32_t codepoint) {
     double scale_y = placement.height / (max_y - static_cast<double>(min_y));
 
     std::vector<FT_Vector> points(source_points.size());
-    std::vector<char> tags(source_points.size());
-    std::vector<short> contours(contour_indices.size());
+    std::vector<unsigned char> tags(source_points.size());
+    std::vector<unsigned short> contours(contour_indices.size());
     for (size_t i = 0; i < source_points.size(); ++i) {
         double x = placement.x + (source_points[i].x - min_x) * scale_x;
         double y = placement.y + (source_points[i].y - min_y) * scale_y;
@@ -912,11 +1087,11 @@ CachedGlyph load_glyph(TermuxVulkanRenderer *renderer, uint32_t codepoint) {
             ? FT_CURVE_TAG_ON : FT_CURVE_TAG_CONIC;
     }
     for (size_t i = 0; i < contour_indices.size(); ++i)
-        contours[i] = static_cast<short>(contour_indices[i]);
+        contours[i] = static_cast<unsigned short>(contour_indices[i]);
 
     FT_Outline outline{};
-    outline.n_contours = static_cast<short>(contours.size());
-    outline.n_points = static_cast<short>(points.size());
+    outline.n_contours = static_cast<unsigned short>(contours.size());
+    outline.n_points = static_cast<unsigned short>(points.size());
     outline.points = points.data();
     outline.tags = tags.data();
     outline.contours = contours.data();

@@ -16,13 +16,13 @@ ext {
             revision: "d4c88d8069912b653d707191388ca98e24751f12"],
         freetype: [
             repository: "https://github.com/freetype/freetype.git",
-            revision: "920c5502cc3ddda88f6c7d85ee834ac611bb11cc"],
+            revision: "0a0221a1347e2f1e07c395263540026e9a0aa7c7"],
         harfbuzz: [
             repository: "https://github.com/harfbuzz/harfbuzz.git",
-            revision: "ea6a172f84f2cbcfed803b5ae71064c7afb6b5c2"],
+            revision: "36cb489cb02ce4b92099669ba9f9bea348eff93f"],
         libpng: [
             repository: "https://github.com/pnggroup/libpng.git",
-            revision: "ed217e3e601d8e462f7fd1e04bed43ac42212429"]]
+            revision: "3061454d980de7d53608f594194cfac722721d2a"]]
 }
 
 tasks.register("prepareNativeSources", Exec) {

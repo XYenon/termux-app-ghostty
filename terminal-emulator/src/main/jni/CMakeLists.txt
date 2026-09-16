@@ -37,11 +37,18 @@ add_subdirectory("${FREETYPE_SRC}" "${CMAKE_CURRENT_BINARY_DIR}/freetype" EXCLUD
 set(HB_BUILD_UTILS OFF CACHE BOOL "" FORCE)
 set(HB_BUILD_SUBSET OFF CACHE BOOL "" FORCE)
 set(HB_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(HB_BUILD_RASTER ON CACHE BOOL "" FORCE)
+set(HB_BUILD_VECTOR OFF CACHE BOOL "" FORCE)
+set(HB_BUILD_GPU OFF CACHE BOOL "" FORCE)
 set(HB_HAVE_FREETYPE ON CACHE BOOL "" FORCE)
 set(HB_HAVE_GLIB OFF CACHE BOOL "" FORCE)
 set(HB_HAVE_ICU OFF CACHE BOOL "" FORCE)
 set(HB_HAVE_GRAPHITE2 OFF CACHE BOOL "" FORCE)
 add_subdirectory("${HARFBUZZ_SRC}" "${CMAKE_CURRENT_BINARY_DIR}/harfbuzz" EXCLUDE_FROM_ALL)
+target_compile_definitions(harfbuzz-raster PRIVATE HAVE_PNG=1)
+target_include_directories(harfbuzz-raster PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/libpng")
+target_link_libraries(harfbuzz-raster png_static)
 
 set(GHOSTTY_PREFIX "${GHOSTTY_ROOT}/${ANDROID_ABI}")
 add_library(ghostty-vt STATIC IMPORTED GLOBAL)
@@ -71,6 +78,7 @@ target_link_libraries(termux PRIVATE
     png_static
     freetype
     harfbuzz
+    harfbuzz-raster
     android
     vulkan
     log
