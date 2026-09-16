@@ -1,5 +1,82 @@
 # Termux application
 
+> [!IMPORTANT]
+> **This is a fork of [termux/termux-app](https://github.com/termux/termux-app)**, based on the upstream
+> [`v0.119.0-beta.3`](https://github.com/termux/termux-app/releases/tag/v0.119.0-beta.3) tag and maintained on the
+> `ghostty` branch. It replaces Termux's Java terminal emulator with [Ghostty](https://ghostty.org)'s
+> `libghostty-vt` and a native Vulkan renderer, and it requires **Android 10+ (API 29) with Vulkan 1.1**.
+> It is not an official Termux release, and as with any Termux build, APKs from different sources are signed with
+> different keys and must not be mixed on the same device — back up your data before switching. The installation,
+> community and wiki links further down still refer to upstream Termux.
+>
+> See [Differences from upstream](#differences-from-upstream) for the complete list.
+
+## Differences from upstream
+
+### Terminal core
+
+- **Ghostty replaces the Java terminal emulator.** `TerminalSession` drives the new `GhosttyTerminal` class, which
+  talks to `libghostty-vt` through the JNI bridge in `terminal-emulator/src/main/jni/ghostty_engine.cpp`. Upstream's
+  `TerminalEmulator` implementation is still in the tree but is no longer used at runtime.
+- **Vulkan rendering.** `TerminalRenderer` was removed and `ghostty_renderer.cpp` draws the screen with Vulkan, so
+  `android.hardware.vulkan.version` `0x401000` (Vulkan 1.1) and `vulkan.level` `1` are now required features in the
+  manifest; on a device without Vulkan 1.1 the terminal stays blank and the failure is only written to logcat.
+- **`xterm-ghostty` terminfo.** The terminfo database is generated from the pinned Ghostty source at build time,
+  shipped as an APK asset and installed to `$PREFIX/share/terminfo/x/xterm-ghostty` during bootstrap; `TERM` is set
+  to `xterm-ghostty` once it is installed, and falls back to `xterm-256color` otherwise.
+
+### Terminal features
+
+- **Find in terminal** from the terminal context menu, with next/previous navigation and a match counter.
+- **OSC 52 clipboard** with multi-MIME read and write, an explicit permission prompt (allow once / always allow /
+  deny) and a 64 MiB payload limit.
+- **OSC 7, OSC 9, OSC 777, OSC 9;4 and OSC 22**: working directory reporting, desktop notifications, a progress bar
+  in the terminal layout and mouse-shape queries.
+- **Kitty graphics** (inline images, including animations) with a 64 MiB storage limit, and the **Ghostty Glyph
+  Protocol** for app-supplied vector glyphs.
+- **Mouse input**: precise touch mouse aiming with a target overlay and drag support, plus mouse-shape driven context
+  menu actions (`Open link`, `Copy link`).
+- **Extra keys**: `F13`–`F25`, `HELP` and `CONTEXT_MENU` (with `MENU`/`APP` aliases).
+- **Configurable IME input** through the new `enable-ime-input` `termux.properties` property (default `true`).
+- **Ordered font fallback**: additional fonts placed in `~/.termux/fonts` are applied in filename order, and HarfBuzz
+  renders color fonts (COLR/CPAL), such as emoji.
+- Fixes for text selection handles, the floating selection toolbar, block cursor text and stale cursor pixels.
+
+### Usage notes
+
+- **`$TERM` needs no setup.** The app installs the matching terminfo into `$PREFIX/share/terminfo/x/xterm-ghostty`
+  whenever it starts, so programs that look the terminal up by name work out of the box.
+- **Keys, IME and fonts are configured as before**, from `~/.termux/termux.properties` and `~/.termux`: use `F13`–`F25`,
+  `HELP` or `CONTEXT_MENU` (also accepted as `MENU`, `APP` or `CONTEXTMENU`) in `extra-keys`, set
+  `enable-ime-input = false` to go back to character-based input, and drop extra fonts (`.ttf`, `.otf` or `.ttc`) into
+  `~/.termux/fonts` to have them appended in filename order after `~/.termux/font.ttf`.
+- **Clipboard reads ask for approval**: a program that reads the Android clipboard triggers a dialog with allow once /
+  always allow (remembered for that terminal session) / deny. Writes do not prompt.
+- **Mouse aiming**: in a program that enables mouse reporting (tmux, vim, htop, …) a long press starts aiming instead
+  of text selection. A crosshair with a magnifier appears; drag to fine-tune, release to fix the target, then choose
+  `Click`, `More…` (the terminal menu) or `Cancel`. Dragging right after the long press sends a mouse drag instead.
+  Programs without mouse reporting keep the normal long-press text selection.
+- **Progress and notifications**: OSC 9;4 progress reports show a bar above the terminal, and OSC 9 / OSC 777
+  notifications are posted as Android notifications (Android 13+ asks for the notification permission).
+- **Packages and plugins keep working**: the package name, `sharedUserId` and the `apt-android-7` bootstrap are
+  unchanged, so `pkg`/`apt`, `RUN_COMMAND` intents and the upstream plugin apps (Termux:API, Termux:Boot, …) keep
+  working when they are signed with the same key as this app.
+
+### Platform, build and development
+
+- `minSdkVersion` 21 → 29 and `targetSdkVersion` 28 → 29, so Android 10+ is required and the `apt-android-5`
+  (Android 5/6) variant is no longer supported.
+- App version `0.200.0-beta.1` (versionCode `2050`) instead of `0.119.0-beta.3` (`1022`), plus the
+  `POST_NOTIFICATIONS` permission.
+- APKs are built by the `Build` workflow on the `ghostty` branch for all five ABIs (debug and release, with SHA-256
+  manifests) and can be downloaded from its workflow artifacts or from the assets attached to a release. They are test
+  builds: the debug APKs use the shared test key that upstream also publishes; JitPack library builds use Zig 0.16 and
+  NDK 29.
+- [`docs/ghostty-upstream.md`](docs/ghostty-upstream.md) records every Ghostty sync and what was intentionally not
+  adapted.
+
+***
+
 [![Build status](https://github.com/termux/termux-app/workflows/Build/badge.svg)](https://github.com/termux/termux-app/actions)
 [![Testing status](https://github.com/termux/termux-app/workflows/Unit%20tests/badge.svg)](https://github.com/termux/termux-app/actions)
 [![Join the chat at https://gitter.im/termux/termux](https://badges.gitter.im/termux/termux.svg)](https://gitter.im/termux/termux)
