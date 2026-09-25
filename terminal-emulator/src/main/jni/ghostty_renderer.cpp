@@ -1478,8 +1478,9 @@ void clear_render_dirty(TermuxGhosttyEngine *engine) {
 bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
                    bool *frame_changed, std::string *error) {
     TermuxGhosttyEngine *engine = renderer->engine;
-    if (ghostty_render_state_update(engine->render_state, engine->terminal) !=
-        GHOSTTY_SUCCESS) {
+    if (!engine->render_held &&
+        ghostty_render_state_update(engine->render_state, engine->terminal) !=
+            GHOSTTY_SUCCESS) {
         *error = "ghostty_render_state_update failed";
         return false;
     }
@@ -2199,6 +2200,17 @@ TermuxRendererDrawResult termux_renderer_draw(
     }
 
     termux_ghostty_engine_lock(renderer->engine);
+    TermuxGhosttyEngine *engine = renderer->engine;
+    if (engine->render_held &&
+        std::chrono::steady_clock::now() - engine->render_hold_started >=
+            std::chrono::seconds(1)) {
+        const GhosttyTerminalModeConfig mode = {
+            GHOSTTY_MODE_SYNC_OUTPUT, false
+        };
+        ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_MODE,
+                            &mode);
+        engine->render_held = false;
+    }
     bool frame_changed = false;
     bool composed = compose_frame(
         renderer, cursor_visible, &frame_changed, error);

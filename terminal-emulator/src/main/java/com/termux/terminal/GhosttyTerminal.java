@@ -383,6 +383,12 @@ public final class GhosttyTerminal implements AutoCloseable {
         }
     }
 
+    /** Milliseconds until a synchronized-output hold must be released, or -1. */
+    public synchronized long getRenderHoldDelay() {
+        long handle = getHandleIfOpen();
+        return handle == 0 ? -1 : nativeRenderHoldDelay(handle);
+    }
+
     public long tickKittyGraphicsAnimations(long nowMillis) {
         waitForClipboardPrompt();
         synchronized (mRendererLock) {
@@ -597,6 +603,7 @@ public final class GhosttyTerminal implements AutoCloseable {
                                                    String[] fontPaths);
     private static native boolean nativeRender(long handle,
                                                boolean cursorVisible);
+    private static native long nativeRenderHoldDelay(long handle);
     private static native long nativeTickKittyGraphicsAnimations(
         long handle, long nowMillis);
     private static native void nativeDetachSurface(long handle);

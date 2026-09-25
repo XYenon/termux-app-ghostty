@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <stdint.h>
 
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,8 @@ struct TermuxGhosttyEngine {
     GhosttyMouseEncoder mouse_encoder;
     GhosttyMouseEvent mouse_event;
     GhosttyRenderState render_state;
+    bool render_held;
+    std::chrono::steady_clock::time_point render_hold_started;
     GhosttyRenderStateRowIterator row_iterator;
     GhosttyRenderStateRowCells row_cells;
     GhosttySearch search;

@@ -34,6 +34,8 @@
   in the terminal layout and mouse-shape queries.
 - **Kitty graphics** (inline images, including animations) with a 64 MiB storage limit, and the **Ghostty Glyph
   Protocol** for app-supplied vector glyphs.
+- **Synchronized output** (DEC mode 2026) holds the last complete frame until the program finishes drawing, with a
+  one-second timeout if it never releases the hold.
 - **Mouse input**: precise touch mouse aiming with a target overlay and drag support, plus mouse-shape driven context
   menu actions (`Open link`, `Copy link`).
 - **Extra keys**: `F13`–`F25`, `HELP` and `CONTEXT_MENU` (with `MENU`/`APP` aliases).

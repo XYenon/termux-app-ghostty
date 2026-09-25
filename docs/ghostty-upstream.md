@@ -8,6 +8,36 @@ applies `native/patches/ghostty-android.patch`, and builds `libghostty-vt` for
 the configured Android ABIs. Keep the patch limited to C APIs needed by the
 Android JNI and Vulkan renderer.
 
+## 2026-09-25 sync
+
+The pin moved from `d4c88d8069912b653d707191388ca98e24751f12` to
+`c959af63d11b524a84c21900372990dbc024b059`, the upstream `main` HEAD
+queried for this sync. The 94-commit range (including merge commits) was
+reviewed by commit list and source diff. The existing Android patch applies
+cleanly unchanged; it still supplies glyph inspection, Kitty graphics and
+virtual-placement access, and OSC 22 mouse-shape data absent from the upstream
+C API. The four-ABI `libghostty-vt` build remains the same.
+
+Upstream terminal fixes for reverse wrap, word selection across wide cells and
+hard line breaks, batched DEC special graphics, mode lookup, and Unicode 18
+are inherited through the new pin. The new lib-vt render-hold callback for
+synchronized output (DEC mode 2026) is connected to the Android Vulkan
+renderer: it captures the completed frame when the hold begins, skips live
+render-state updates during the hold, and releases it after one second if the
+program fails to do so. The view schedules a draw for that deadline, even
+when no further PTY output arrives.
+
+The new resize-pull-scrollback switch is meant for Windows ConPTY, which keeps
+its own screen without scrollback; Termux uses a POSIX PTY and retains the
+upstream default. Render-state overscan is intended for fractional smooth
+scrolling; Android currently scrolls by whole cells, so requesting extra rows
+would add work without displaying them. CSI 8 t window sizing requires a
+desktop window manager and is not bound to Android Activity resize. GTK
+fractional scaling, EGL/DMABUF and OpenGL changes, macOS window changes,
+shell-integration changes, font cache internals, CI/dependency metadata and
+translations have no Android host binding. The terminal-core fixes require no
+additional JNI method beyond render hold.
+
 ## 2026-09-16 sync
 
 The pin was advanced from `e2e53f861482e080bf45054ba49ef471f9849937` to

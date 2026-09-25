@@ -1377,6 +1377,10 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
                     SystemClock.uptimeMillis());
                 if (!terminal.render(cursorVisible))
                     mRenderDirty.set(true);
+                long holdDelay = terminal.getRenderHoldDelay();
+                if (holdDelay >= 0 &&
+                    (animationDelay < 0 || holdDelay < animationDelay))
+                    animationDelay = holdDelay;
             } catch (RuntimeException e) {
                 post(() -> mClient.logStackTraceWithMessage(LOG_TAG,
                     "Vulkan terminal render failed", e));

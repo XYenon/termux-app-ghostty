@@ -161,6 +161,19 @@ void write_pty(GhosttyTerminal, void *userdata, const uint8_t *data,
     release_env(engine, attached);
 }
 
+void render_hold(GhosttyTerminal terminal, void *userdata, bool held) {
+    auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
+    if (held) {
+        // The callback runs under the engine lock, before any bytes following
+        // mode 2026 have been processed. Keep this exact completed frame.
+        engine->render_held = ghostty_render_state_update(
+            engine->render_state, terminal) == GHOSTTY_SUCCESS;
+        engine->render_hold_started = std::chrono::steady_clock::now();
+    } else {
+        engine->render_held = false;
+    }
+}
+
 bool terminal_size(GhosttyTerminal terminal, void *,
                    GhosttySizeReportSize *out_size) {
     uint16_t columns = 0;
@@ -1214,6 +1227,8 @@ Java_com_termux_terminal_GhosttyTerminal_nativeCreate(
                          engine);
     ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                          reinterpret_cast<const void *>(write_pty));
+    ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_RENDER_HOLD,
+                         reinterpret_cast<const void *>(render_hold));
     ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_SIZE,
                          reinterpret_cast<const void *>(terminal_size));
     ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME,
@@ -2187,6 +2202,18 @@ Java_com_termux_terminal_GhosttyTerminal_nativeRender(
     return result == TermuxRendererDrawResult::success
         ? JNI_TRUE
         : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_termux_terminal_GhosttyTerminal_nativeRenderHoldDelay(
+    JNIEnv *, jclass, jlong handle) {
+    auto *engine = termux_ghostty_engine_from_handle(handle);
+    ScopedEngineLock lock(engine);
+    if (!engine->render_held) return -1;
+    auto remaining = std::chrono::milliseconds(1000) -
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - engine->render_hold_started);
+    return std::max<int64_t>(1, remaining.count());
 }
 
 extern "C" JNIEXPORT void JNICALL
