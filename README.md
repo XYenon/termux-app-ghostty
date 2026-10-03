@@ -66,8 +66,9 @@
 
 ### Platform, build and development
 
-- `minSdkVersion` 21 → 29 and `targetSdkVersion` 28 → 29, so Android 10+ is required and the `apt-android-5`
-  (Android 5/6) variant is no longer supported.
+- `minSdkVersion` 21 → 29, so Android 10+ is required and the `apt-android-5`
+  (Android 5/6) variant is no longer supported. `targetSdkVersion` remains 28 to allow executing bootstrap
+  and shell binaries in writable app data.
 - App version `0.200.0-beta.1` (versionCode `2050`) instead of `0.119.0-beta.3` (`1022`), plus the
   `POST_NOTIFICATIONS` permission.
 - APKs are built by the `Build` workflow on the `ghostty` branch for all five ABIs (debug and release, with SHA-256
