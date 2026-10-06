@@ -103,6 +103,9 @@ public final class TerminalSession extends TerminalOutput {
      */
     public void updateTerminalSessionClient(TerminalSessionClient client) {
         mClient = client;
+        GhosttyTerminal terminal = mTerminal;
+        if (terminal != null)
+            terminal.setXtChecksumReportEnabled(client.isXtChecksumReportEnabled());
     }
 
     /** Inform the attached pty of the new size and reflow or initialize the emulator. */
@@ -135,6 +138,7 @@ public final class TerminalSession extends TerminalOutput {
             : mTranscriptRows;
         mTerminal = new GhosttyTerminal(this, columns, rows, cellWidthPixels,
             cellHeightPixels, transcriptRows);
+        mTerminal.setXtChecksumReportEnabled(mClient.isXtChecksumReportEnabled());
         mTerminal.setColorScheme(TerminalColors.COLOR_SCHEME.copyColors());
 
         int[] processId = new int[1];

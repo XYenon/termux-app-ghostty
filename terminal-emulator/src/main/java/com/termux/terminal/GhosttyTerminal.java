@@ -110,6 +110,7 @@ public final class GhosttyTerminal implements AutoCloseable {
     private boolean mClosing;
     private boolean mClosePending;
     private int[] mPendingSize;
+    private Boolean mPendingXtChecksumReport;
 
     public static int[] measureFonts(int textSize, String[] fontPaths) {
         return nativeMeasureFont(textSize, fontPaths);
@@ -186,6 +187,20 @@ public final class GhosttyTerminal implements AutoCloseable {
         return handle == 0 ? 0 : nativeGetInt(handle, 15);
     }
 
+    /** Return resident terminal bytes and compression support during memory pressure. */
+    public synchronized long[] getMemoryUsageForCompression() {
+        if (mFeedActive) return null;
+        long handle = getHandleIfOpen();
+        return handle == 0 ? null : nativeGetMemoryUsageForCompression(handle);
+    }
+
+    /** Perform one bounded scrollback compression step. */
+    public synchronized int compressScrollbackIncrementally() {
+        if (mFeedActive) return 0;
+        long handle = getHandleIfOpen();
+        return handle == 0 ? 0 : nativeCompressScrollbackIncrementally(handle);
+    }
+
     public synchronized int getTotalRows() {
         long handle = getHandleIfOpen();
         return handle == 0 ? 0 : nativeGetInt(handle, 14);
@@ -259,6 +274,15 @@ public final class GhosttyTerminal implements AutoCloseable {
     public synchronized void setDefaultCursor(int style, boolean blink) {
         long handle = getHandleIfOpen();
         if (handle != 0) nativeSetDefaultCursor(handle, style, blink);
+    }
+
+    public synchronized void setXtChecksumReportEnabled(boolean enabled) {
+        if (mFeedActive || mClipboardPromptActive) {
+            mPendingXtChecksumReport = enabled;
+            return;
+        }
+        long handle = getHandleIfOpen();
+        if (handle != 0) nativeSetXtChecksumReportEnabled(handle, enabled);
     }
 
     public synchronized void setGlyphProtocolEnabled(boolean enabled) {
@@ -482,10 +506,16 @@ public final class GhosttyTerminal implements AutoCloseable {
         int[] size;
         boolean close;
         synchronized (this) {
+            close = mClosePending;
+            if (!close && !mClosing && mNativeHandle != 0 &&
+                mPendingXtChecksumReport != null) {
+                nativeSetXtChecksumReportEnabled(mNativeHandle,
+                    mPendingXtChecksumReport);
+            }
+            mPendingXtChecksumReport = null;
             mFeedActive = false;
             mClipboardPromptActive = false;
             notifyAll();
-            close = mClosePending;
             mClosePending = false;
             size = close ? null : mPendingSize;
             mPendingSize = null;
@@ -567,6 +597,8 @@ public final class GhosttyTerminal implements AutoCloseable {
                                                         boolean trim);
     private static native byte[] nativeFormatViewport(long handle);
     private static native void nativeSetColorScheme(long handle, int[] colors);
+    private static native void nativeSetXtChecksumReportEnabled(long handle,
+                                                              boolean enabled);
     private static native void nativeSetDefaultCursor(long handle, int style,
                                                       boolean blink);
     private static native void nativeSetGlyphProtocolEnabled(long handle,
@@ -621,4 +653,6 @@ public final class GhosttyTerminal implements AutoCloseable {
     private static native byte[] nativeGetSelectedText(long handle);
     private static native byte[] nativeGetHyperlink(long handle, int column,
                                                     int viewportRow);
+    private static native long[] nativeGetMemoryUsageForCompression(long handle);
+    private static native int nativeCompressScrollbackIncrementally(long handle);
 }

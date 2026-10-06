@@ -77,6 +77,10 @@ public interface TerminalSessionClient {
 
     Integer getTerminalCursorStyle();
 
+    default boolean isXtChecksumReportEnabled() {
+        return false;
+    }
+
 
 
     void logError(String tag, String message);

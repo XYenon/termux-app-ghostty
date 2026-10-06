@@ -449,6 +449,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private void reloadProperties() {
         mProperties.loadTermuxPropertiesFromDisk();
 
+        if (mTermuxTerminalSessionActivityClient != null)
+            mTermuxTerminalSessionActivityClient.updateXtChecksumReportOption();
+
         if (mTermuxTerminalViewClient != null)
             mTermuxTerminalViewClient.onReloadProperties();
     }

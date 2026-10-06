@@ -9,6 +9,7 @@ import android.text.InputType;
 import android.view.inputmethod.EditorInfo;
 
 import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
+import com.termux.shared.termux.settings.properties.TermuxSharedProperties;
 import com.termux.shared.termux.terminal.TermuxTerminalViewClientBase;
 
 import org.junit.Test;
@@ -27,6 +28,21 @@ public class TerminalViewInputConnectionTest {
             .contains(TermuxPropertyConstants.KEY_ENABLE_IME_INPUT));
         assertFalse(TermuxPropertyConstants.TERMUX_DEFAULT_FALSE_BOOLEAN_BEHAVIOUR_PROPERTIES_LIST
             .contains(TermuxPropertyConstants.KEY_ENABLE_IME_INPUT));
+    }
+
+    @Test
+    public void xtChecksumReportPropertyDefaultsToDisabledAndCanBeEnabled() {
+        String key = TermuxPropertyConstants.KEY_VT_XT_CHECKSUM_REPORT;
+        assertTrue(TermuxPropertyConstants.TERMUX_DEFAULT_FALSE_BOOLEAN_BEHAVIOUR_PROPERTIES_LIST
+            .contains(key));
+        assertFalse(TermuxPropertyConstants.TERMUX_DEFAULT_TRUE_BOOLEAN_BEHAVIOUR_PROPERTIES_LIST
+            .contains(key));
+        assertEquals(false, TermuxSharedProperties.getInternalTermuxPropertyValueFromValue(
+            RuntimeEnvironment.getApplication(), key, null));
+        assertEquals(true, TermuxSharedProperties.getInternalTermuxPropertyValueFromValue(
+            RuntimeEnvironment.getApplication(), key, "true"));
+        assertEquals(false, TermuxSharedProperties.getInternalTermuxPropertyValueFromValue(
+            RuntimeEnvironment.getApplication(), key, "false"));
     }
 
     @Test

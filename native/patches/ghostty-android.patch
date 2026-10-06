@@ -1,5 +1,5 @@
 diff --git a/include/ghostty/vt.h b/include/ghostty/vt.h
-index cfa1017e7..48a31ee16 100644
+index cfa1017e..48a31ee1 100644
 --- a/include/ghostty/vt.h
 +++ b/include/ghostty/vt.h
 @@ -148,6 +148,7 @@ extern "C" {
@@ -12,7 +12,7 @@ index cfa1017e7..48a31ee16 100644
  #include <ghostty/vt/grid_ref.h>
 diff --git a/include/ghostty/vt/glyph.h b/include/ghostty/vt/glyph.h
 new file mode 100644
-index 000000000..02f26c6a3
+index 00000000..02f26c6a
 --- /dev/null
 +++ b/include/ghostty/vt/glyph.h
 @@ -0,0 +1,87 @@
@@ -104,7 +104,7 @@ index 000000000..02f26c6a3
 +
 +#endif /* GHOSTTY_VT_GLYPH_H */
 diff --git a/include/ghostty/vt/kitty_graphics.h b/include/ghostty/vt/kitty_graphics.h
-index 99cee60ac..7965ce1c9 100644
+index 99cee60a..7965ce1c 100644
 --- a/include/ghostty/vt/kitty_graphics.h
 +++ b/include/ghostty/vt/kitty_graphics.h
 @@ -486,6 +486,42 @@ typedef struct {
@@ -211,71 +211,11 @@ index 99cee60ac..7965ce1c9 100644
  /** @} */
 
  #ifdef __cplusplus
-diff --git a/include/ghostty/vt/terminal.h b/include/ghostty/vt/terminal.h
-index db5420d2f..08c7e8828 100644
---- a/include/ghostty/vt/terminal.h
-+++ b/include/ghostty/vt/terminal.h
-@@ -442,6 +442,45 @@ typedef enum GHOSTTY_ENUM_TYPED {
-   GHOSTTY_CLIPBOARD_LOCATION_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
- } GhosttyClipboardLocation;
-
-+/** Mouse pointer shapes accepted by OSC 22. */
-+typedef enum GHOSTTY_ENUM_TYPED {
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_DEFAULT = 0,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_CONTEXT_MENU = 1,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_HELP = 2,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_POINTER = 3,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_PROGRESS = 4,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_WAIT = 5,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_CELL = 6,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_CROSSHAIR = 7,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_TEXT = 8,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_VERTICAL_TEXT = 9,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_ALIAS = 10,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_COPY = 11,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_MOVE = 12,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_NO_DROP = 13,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_NOT_ALLOWED = 14,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_GRAB = 15,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_GRABBING = 16,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_ALL_SCROLL = 17,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_COL_RESIZE = 18,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_ROW_RESIZE = 19,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_N_RESIZE = 20,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_E_RESIZE = 21,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_S_RESIZE = 22,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_W_RESIZE = 23,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_NE_RESIZE = 24,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_NW_RESIZE = 25,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_SE_RESIZE = 26,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_SW_RESIZE = 27,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_EW_RESIZE = 28,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_NS_RESIZE = 29,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_NESW_RESIZE = 30,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_NWSE_RESIZE = 31,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_ZOOM_IN = 32,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_ZOOM_OUT = 33,
-+  GHOSTTY_TERMINAL_MOUSE_SHAPE_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
-+} GhosttyTerminalMouseShape;
-+
- /**
-  * One MIME representation in a clipboard write.
-  *
-@@ -1951,6 +1990,9 @@ typedef enum GHOSTTY_ENUM_TYPED {
-    * Output type: size_t *
-    */
-   GHOSTTY_TERMINAL_DATA_CLIPBOARD_WRITE_MAX_BYTES = 40,
-+
-+  /** The current OSC 22 mouse pointer shape. Output: GhosttyTerminalMouseShape*. */
-+  GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE = 41,
-   GHOSTTY_TERMINAL_DATA_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
- } GhosttyTerminalData;
-
 diff --git a/src/lib_vt.zig b/src/lib_vt.zig
-index a0227aef7..b95ecd78b 100644
+index 517ccce6..18f25558 100644
 --- a/src/lib_vt.zig
 +++ b/src/lib_vt.zig
-@@ -290,6 +290,10 @@ comptime {
+@@ -294,6 +294,10 @@ comptime {
              @export(&c.terminal_selection_format_buf, .{ .name = "ghostty_terminal_selection_format_buf" });
              @export(&c.terminal_selection_format_alloc, .{ .name = "ghostty_terminal_selection_format_alloc" });
          }
@@ -286,7 +226,7 @@ index a0227aef7..b95ecd78b 100644
          if (features.render_state) {
              @export(&c.render_state_new, .{ .name = "ghostty_render_state_new" });
              @export(&c.render_state_update, .{ .name = "ghostty_render_state_update" });
-@@ -400,6 +404,8 @@ comptime {
+@@ -404,6 +408,8 @@ comptime {
              @export(&c.kitty_graphics_placement_viewport_pos, .{ .name = "ghostty_kitty_graphics_placement_viewport_pos" });
              @export(&c.kitty_graphics_placement_source_rect, .{ .name = "ghostty_kitty_graphics_placement_source_rect" });
              @export(&c.kitty_graphics_placement_render_info, .{ .name = "ghostty_kitty_graphics_placement_render_info" });
@@ -296,10 +236,10 @@ index a0227aef7..b95ecd78b 100644
          if (features.grid_introspection) {
              @export(&c.grid_ref_cell, .{ .name = "ghostty_grid_ref_cell" });
 diff --git a/src/terminal/Terminal.zig b/src/terminal/Terminal.zig
-index e9cc3b8e6..f55314f76 100644
+index 4f4f0ae0..de575c72 100644
 --- a/src/terminal/Terminal.zig
 +++ b/src/terminal/Terminal.zig
-@@ -91,6 +91,9 @@ mouse_shape: mouse.Shape = .text,
+@@ -96,6 +96,9 @@ mouse_shape: mouse.Shape = .text,
  /// Per-session Glyph Protocol registrations.
  glyph_glossary: glyph.Glossary = .empty,
 
@@ -309,7 +249,7 @@ index e9cc3b8e6..f55314f76 100644
  /// Kitty drag and drop protocol (OSC 72) state. Allocated when a client
  /// registers to accept drops (t=a) and freed when it unregisters (t=A),
  /// so a terminal that never runs a drag and drop aware program pays
-@@ -615,6 +618,9 @@ fn printSliceFast(
+@@ -657,6 +660,9 @@ fn printSliceFast(
      grapheme_cluster: bool,
      allow_unicode: bool,
  ) !usize {
@@ -319,7 +259,7 @@ index e9cc3b8e6..f55314f76 100644
      const screen: *Screen = self.screens.active;
 
      // Codepoints in [0x10, 0xFF] are always narrow (width 1, matching
-@@ -1450,7 +1456,12 @@ pub fn print(self: *Terminal, c: u21) !void {
+@@ -1503,7 +1509,12 @@ pub fn print(self: *Terminal, c: u21) !void {
      // non-single-width characters properly. We have a fast-path for
      // byte-sized characters since they're so common. We can ignore
      // control characters because they're always filtered prior.
@@ -333,7 +273,7 @@ index e9cc3b8e6..f55314f76 100644
 
      // Note: it is possible to have a width of "3" and a width of "-1" from
      // uucode.x's wcwidth. We should look into those cases and handle them
-@@ -3800,7 +3811,13 @@ pub fn glyphProtocol(
+@@ -3854,7 +3865,13 @@ pub fn glyphProtocol(
  ) ?glyph.Response {
      const resp = glyph.execute(alloc, &self.glyph_glossary, req);
      switch (req.*) {
@@ -348,7 +288,7 @@ index e9cc3b8e6..f55314f76 100644
          .support, .query => {},
      }
      return resp;
-@@ -4931,6 +4948,10 @@ pub fn fullReset(self: *Terminal) void {
+@@ -4991,6 +5008,10 @@ pub fn fullReset(self: *Terminal) void {
      self.pwd.clearRetainingCapacity();
      self.title.clearRetainingCapacity();
      self.glyph_glossary.clearAndFree(self.gpa());
@@ -361,7 +301,7 @@ index e9cc3b8e6..f55314f76 100644
      if (self.kitty_dnd) |dnd| dnd.chunking = .{};
 diff --git a/src/terminal/c/glyph.zig b/src/terminal/c/glyph.zig
 new file mode 100644
-index 000000000..0cc4e2b38
+index 00000000..0cc4e2b3
 --- /dev/null
 +++ b/src/terminal/c/glyph.zig
 @@ -0,0 +1,135 @@
@@ -501,7 +441,7 @@ index 000000000..0cc4e2b38
 +    return .success;
 +}
 diff --git a/src/terminal/c/kitty_graphics.zig b/src/terminal/c/kitty_graphics.zig
-index 2bd5e8620..4bcbc7173 100644
+index 2bd5e862..4bcbc717 100644
 --- a/src/terminal/c/kitty_graphics.zig
 +++ b/src/terminal/c/kitty_graphics.zig
 @@ -5,6 +5,7 @@ const lib = @import("../lib.zig");
@@ -690,7 +630,7 @@ index 2bd5e8620..4bcbc7173 100644
  ///
  /// Converts the placement's internal pin to viewport-relative column
 diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
-index 45b4dc47f..b8d8ef4ab 100644
+index 5248c2cb..fe66ef6e 100644
 --- a/src/terminal/c/main.zig
 +++ b/src/terminal/c/main.zig
 @@ -8,6 +8,7 @@ pub const color = @import("color.zig");
@@ -710,7 +650,7 @@ index 45b4dc47f..b8d8ef4ab 100644
  pub const types = @import("types.zig");
  pub const modes = @import("modes.zig");
  pub const osc = @import("osc.zig");
-@@ -84,6 +87,11 @@ pub const formatter_format_buf = formatter.format_buf;
+@@ -85,6 +88,11 @@ pub const formatter_format_buf = formatter.format_buf;
  pub const formatter_format_alloc = formatter.format_alloc;
  pub const formatter_free = formatter.free;
 
@@ -722,7 +662,7 @@ index 45b4dc47f..b8d8ef4ab 100644
  pub const render_state_new = render.new;
  pub const render_state_free = render.free;
  pub const render_state_update = render.update;
-@@ -270,6 +278,7 @@ test {
+@@ -271,6 +279,7 @@ test {
      _ = row;
      _ = focus;
      _ = formatter;
@@ -731,18 +671,10 @@ index 45b4dc47f..b8d8ef4ab 100644
      _ = osc;
      _ = render;
 diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
-index ffe2ccf4f..12c741f46 100644
+index f6ce6b11..af1f8e0b 100644
 --- a/src/terminal/c/terminal.zig
 +++ b/src/terminal/c/terminal.zig
-@@ -30,6 +30,7 @@ const style_c = @import("style.zig");
- const color = @import("../color.zig");
- const clipboard = @import("../clipboard.zig");
- const kitty_clipboard = @import("../kitty/clipboard.zig");
-+const mouse = @import("../mouse.zig");
- const c_io = @import("io.zig");
- const snapshot_core = @import("../snapshot/main.zig");
- const Result = @import("result.zig").Result;
-@@ -647,6 +648,10 @@ pub fn zigTerminal(terminal_: Terminal) ?*ZigTerminal {
+@@ -718,6 +718,10 @@ pub fn zigTerminal(terminal_: Terminal) ?*ZigTerminal {
      return (terminal_ orelse return null).terminal;
  }
 
@@ -753,35 +685,11 @@ index ffe2ccf4f..12c741f46 100644
  /// Attach the persistent C stream and I/O owner to a heap-stable terminal.
  /// The caller retains ownership of both inputs if wrapper allocation fails.
  fn wrap(
-@@ -1556,6 +1561,7 @@ pub const TerminalData = enum(c_int) {
-     vt_ground = 38,
-     cursor_at_prompt = 39,
-     clipboard_write_max_bytes = 40,
-+    mouse_shape = 41,
-
-     /// Output type expected for querying the data of the given kind.
-     pub fn OutType(comptime self: TerminalData) type {
-@@ -1574,6 +1580,7 @@ pub const TerminalData = enum(c_int) {
-             .kitty_keyboard_flags => u8,
-             .scrollbar => TerminalScrollbar,
-             .cursor_style => style_c.Style,
-+            .mouse_shape => mouse.Shape,
-             .title, .pwd => lib.String,
-             .total_rows,
-             .scrollback_rows,
-@@ -1720,6 +1727,7 @@ fn getTyped(
-         ),
-         .viewport_active => out.* = t.screens.active.pages.viewport == .active,
-         .vt_processing_error => out.* = wrapper.stream.handler.semantic_failure,
-+        .mouse_shape => out.* = t.mouse_shape,
-         .vt_ground => out.* = wrapper.stream.ground(),
-         .scrollback_max_bytes => {
-             const max = t.screens.get(.primary).?.pages.limits.bytes.explicit;
 diff --git a/src/terminal/page.zig b/src/terminal/page.zig
-index ad2b1a7e5..f51ca5e2b 100644
+index 82e07583..b3154be5 100644
 --- a/src/terminal/page.zig
 +++ b/src/terminal/page.zig
-@@ -2003,7 +2003,8 @@ pub const Capacity = struct {
+@@ -1997,7 +1997,8 @@ pub const Capacity = struct {
      fn availableBytesForGrid(self: Capacity) usize {
          comptime {
              assert(cells_align % Page.MetaLayout.alignment == 0);

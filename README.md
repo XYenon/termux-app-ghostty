@@ -36,6 +36,10 @@
   Protocol** for app-supplied vector glyphs.
 - **Synchronized output** (DEC mode 2026) holds the last complete frame until the program finishes drawing, with a
   one-second timeout if it never releases the hold.
+- **Scrollback compression** on 64-bit devices responds to Android memory pressure in the background, preserving
+  history and restoring it transparently when you scroll back.
+- **Optional screen checksums** (DECRQCRA / XTCHECKSUM) for terminal diagnostics, enabled with
+  `vt-xt-checksum-report = true` in `termux.properties` (default `false`).
 - **Mouse input**: precise touch mouse aiming with a target overlay and drag support, plus mouse-shape driven context
   menu actions (`Open link`, `Copy link`).
 - **Extra keys**: `F13`–`F25`, `HELP` and `CONTEXT_MENU` (with `MENU`/`APP` aliases).
@@ -60,6 +64,10 @@
   Programs without mouse reporting keep the normal long-press text selection.
 - **Progress and notifications**: OSC 9;4 progress reports show a bar above the terminal, and OSC 9 / OSC 777
   notifications are posted as Android notifications (Android 13+ asks for the notification permission).
+- **Screen checksum reports**: set `vt-xt-checksum-report = true` in `~/.termux/termux.properties` when needed for
+  terminal diagnostics. The default is `false`, since a program can query individual cells to recover previous
+  screen output. Run `termux-reload-settings` to apply changes to running sessions. XTCHECKSUM selects the
+  calculation until the terminal is reset.
 - **Packages and plugins keep working**: the package name, `sharedUserId` and the `apt-android-7` bootstrap are
   unchanged, so `pkg`/`apt`, `RUN_COMMAND` intents and the upstream plugin apps (Termux:API, Termux:Boot, …) keep
   working when they are signed with the same key as this app.
