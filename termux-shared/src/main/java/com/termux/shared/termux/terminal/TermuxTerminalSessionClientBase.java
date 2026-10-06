@@ -7,6 +7,7 @@ import com.termux.shared.logger.Logger;
 import com.termux.terminal.TerminalOutput;
 import com.termux.terminal.TerminalSession;
 import com.termux.terminal.TerminalSessionClient;
+import com.termux.shared.termux.settings.properties.TermuxAppSharedProperties;
 
 public class TermuxTerminalSessionClientBase implements TerminalSessionClient {
 
@@ -117,6 +118,12 @@ public class TermuxTerminalSessionClientBase implements TerminalSessionClient {
     @Override
     public Integer getTerminalCursorStyle() {
         return null;
+    }
+
+    @Override
+    public boolean isXtChecksumReportEnabled() {
+        TermuxAppSharedProperties properties = TermuxAppSharedProperties.getProperties();
+        return properties != null && properties.isXtChecksumReportEnabled();
     }
 
 

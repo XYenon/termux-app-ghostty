@@ -974,6 +974,23 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         return mActivity.getProperties().getTerminalCursorStyle();
     }
 
+    @Override
+    public boolean isXtChecksumReportEnabled() {
+        return mActivity.getProperties().isXtChecksumReportEnabled();
+    }
+
+    /** Apply checksum report changes after termux.properties is reloaded. */
+    public void updateXtChecksumReportOption() {
+        boolean enabled = isXtChecksumReportEnabled();
+        TermuxService service = mActivity.getTermuxService();
+        if (service == null) return;
+        for (TermuxSession session : service.getTermuxSessions()) {
+            TerminalSession terminal = session.getTerminalSession();
+            if (terminal != null && terminal.getTerminal() != null)
+                terminal.getTerminal().setXtChecksumReportEnabled(enabled);
+        }
+    }
+
 
 
     /** Load mBellSoundPool */

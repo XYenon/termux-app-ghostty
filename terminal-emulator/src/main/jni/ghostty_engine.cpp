@@ -351,6 +351,20 @@ void pwd_changed(GhosttyTerminal terminal, void *userdata) {
                         engine->pwd);
 }
 
+void terminal_reset(GhosttyTerminal, void *userdata) {
+    auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
+    // RIS does not emit title/pwd effects. Clear the cached host state here;
+    // nativeFeed publishes the final values after releasing the engine lock.
+    free(engine->title);
+    engine->title = nullptr;
+    free(engine->pwd);
+    engine->pwd = nullptr;
+    engine->render_held = false;
+    engine->pending_desktop_notification = false;
+    engine->pending_notification_title.clear();
+    engine->pending_notification_body.clear();
+}
+
 void desktop_notification(
     GhosttyTerminal, void *userdata,
     const GhosttyTerminalDesktopNotification *notification) {
@@ -1229,6 +1243,8 @@ Java_com_termux_terminal_GhosttyTerminal_nativeCreate(
                          reinterpret_cast<const void *>(write_pty));
     ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_RENDER_HOLD,
                          reinterpret_cast<const void *>(render_hold));
+    ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_RESET,
+                         reinterpret_cast<const void *>(terminal_reset));
     ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_SIZE,
                          reinterpret_cast<const void *>(terminal_size));
     ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME,
@@ -1260,7 +1276,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeCreate(
         throw_illegal_state(env, "Out of memory creating libghostty terminal");
         return 0;
     }
-    engine->mouse_shape = GHOSTTY_TERMINAL_MOUSE_SHAPE_TEXT;
+    engine->mouse_shape = GHOSTTY_MOUSE_SHAPE_TEXT;
     return reinterpret_cast<jlong>(engine);
 }
 
@@ -1352,8 +1368,8 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
             has_after = read_background(engine->terminal, &after);
             new_title = engine->title ? engine->title : "";
             new_pwd = engine->pwd ? engine->pwd : "";
-            GhosttyTerminalMouseShape mouse_shape =
-                GHOSTTY_TERMINAL_MOUSE_SHAPE_TEXT;
+            GhosttyMouseShape mouse_shape =
+                GHOSTTY_MOUSE_SHAPE_TEXT;
             ghostty_terminal_get(engine->terminal,
                                  GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE,
                                  &mouse_shape);
@@ -1437,22 +1453,11 @@ Java_com_termux_terminal_GhosttyTerminal_nativeReset(
             old_pwd = engine->pwd ? engine->pwd : "";
             had_before = read_background(engine->terminal, &before);
             ghostty_terminal_reset(engine->terminal);
+            terminal_reset(engine->terminal, engine);
             has_after = read_background(engine->terminal, &after);
-            new_title = terminal_string(
-                engine->terminal, GHOSTTY_TERMINAL_DATA_TITLE);
-            char *title = strdup(new_title.c_str());
-            char *pwd = strdup("");
-            if (!title || !pwd) {
-                free(title);
-                free(pwd);
-                throw std::bad_alloc();
-            }
-            free(engine->title);
-            engine->title = title;
-            free(engine->pwd);
-            engine->pwd = pwd;
+            new_title = engine->title ? engine->title : "";
             old_mouse_shape = engine->mouse_shape;
-            engine->mouse_shape = GHOSTTY_TERMINAL_MOUSE_SHAPE_TEXT;
+            engine->mouse_shape = GHOSTTY_MOUSE_SHAPE_TEXT;
         }
         if (old_title != new_title) {
             notify_title_changed(engine, old_title, new_title);
@@ -1461,9 +1466,9 @@ Java_com_termux_terminal_GhosttyTerminal_nativeReset(
             notify_string_changed(engine, engine->pwd_method, "",
                                   "working directory reset callback");
         }
-        if (old_mouse_shape != GHOSTTY_TERMINAL_MOUSE_SHAPE_TEXT) {
+        if (old_mouse_shape != GHOSTTY_MOUSE_SHAPE_TEXT) {
             notify_mouse_shape_changed(
-                engine, GHOSTTY_TERMINAL_MOUSE_SHAPE_TEXT);
+                engine, GHOSTTY_MOUSE_SHAPE_TEXT);
         }
         notify_progress_report(
             engine, GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE, -1);
@@ -1492,7 +1497,7 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeGetMouseShape(
     JNIEnv *, jclass, jlong handle) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
-    GhosttyTerminalMouseShape value = GHOSTTY_TERMINAL_MOUSE_SHAPE_TEXT;
+    GhosttyMouseShape value = GHOSTTY_MOUSE_SHAPE_TEXT;
     ScopedEngineLock lock(engine);
     ghostty_terminal_get(engine->terminal,
                          GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE, &value);
@@ -2222,4 +2227,56 @@ Java_com_termux_terminal_GhosttyTerminal_nativeDetachSurface(
     auto *engine = termux_ghostty_engine_from_handle(handle);
     termux_renderer_destroy(engine->renderer);
     engine->renderer = nullptr;
+}
+
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_termux_terminal_GhosttyTerminal_nativeGetMemoryUsageForCompression(
+    JNIEnv *env, jclass, jlong handle) {
+    auto *engine = termux_ghostty_engine_from_handle(handle);
+    GhosttyTerminalMemoryUsage usage = {};
+    usage.size = sizeof(usage);
+    {
+        ScopedEngineLock lock(engine);
+        if (ghostty_terminal_get(
+                engine->terminal,
+                GHOSTTY_TERMINAL_DATA_MEMORY_USAGE,
+                &usage) != GHOSTTY_SUCCESS) {
+            return nullptr;
+        }
+    }
+    jlong values[2] = {
+        static_cast<jlong>(usage.primary_resident_bytes +
+            usage.primary_image_bytes + usage.alternate_resident_bytes +
+            usage.alternate_image_bytes),
+        static_cast<jlong>(usage.compression_supported ? 1 : 0)
+    };
+    jlongArray output = env->NewLongArray(2);
+    if (output) env->SetLongArrayRegion(output, 0, 2, values);
+    return output;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_termux_terminal_GhosttyTerminal_nativeCompressScrollbackIncrementally(
+    JNIEnv *, jclass, jlong handle) {
+    auto *engine = termux_ghostty_engine_from_handle(handle);
+    GhosttyTerminalCompressionResult compression_result =
+        GHOSTTY_TERMINAL_COMPRESSION_RESULT_UNSUPPORTED;
+    ScopedEngineLock lock(engine);
+    if (ghostty_terminal_compress(
+            engine->terminal,
+            GHOSTTY_TERMINAL_COMPRESSION_MODE_INCREMENTAL,
+            &compression_result) != GHOSTTY_SUCCESS) {
+        return GHOSTTY_TERMINAL_COMPRESSION_RESULT_UNSUPPORTED;
+    }
+    return static_cast<jint>(compression_result);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_termux_terminal_GhosttyTerminal_nativeSetXtChecksumReportEnabled(
+    JNIEnv *, jclass, jlong handle, jboolean enabled) {
+    auto *engine = termux_ghostty_engine_from_handle(handle);
+    bool value = enabled;
+    ScopedEngineLock lock(engine);
+    ghostty_terminal_set(engine->terminal,
+                         GHOSTTY_TERMINAL_OPT_XT_CHECKSUM_REPORT, &value);
 }

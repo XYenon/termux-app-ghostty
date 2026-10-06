@@ -8,6 +8,79 @@ applies `native/patches/ghostty-android.patch`, and builds `libghostty-vt` for
 the configured Android ABIs. Keep the patch limited to C APIs needed by the
 Android JNI and Vulkan renderer.
 
+## 2026-10-06 sync
+
+The pin moved from `c959af63d11b524a84c21900372990dbc024b059` to
+`c3203ea4b169a18eb2ccfe92847e426d8afea858`, the upstream `main` HEAD
+queried for this sync. The 135-commit range (including merge commits) was
+reviewed by commit list and source diff ([upstream comparison](https://github.com/ghostty-org/ghostty/compare/c959af63d11b524a84c21900372990dbc024b059...c3203ea4b169a18eb2ccfe92847e426d8afea858)).
+
+Android integration changes:
+
+- OSC 22 mouse shapes now use upstream `GhosttyMouseShape` and
+  `GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE`. The duplicate Android enum and Zig
+  getter were removed from the patch. The numeric values match the existing
+  Java pointer mapping, so touch aiming and link actions keep working. Empty
+  OSC 22 now restores the text pointer through the upstream fix.
+- The new RIS reset callback clears cached title and working-directory values
+  and pending notification state. JNI publishes the final state after releasing
+  the native lock, including when a reset and a new title arrive in the same
+  PTY read. Explicit application resets use the same host-state cleanup.
+- Android memory-pressure callbacks request bounded scrollback compression on
+  a background worker. The new memory-usage query prioritizes terminals with
+  the largest resident footprint. History remains available and decompresses
+  transparently when accessed. Upstream supports runtime compression on
+  64-bit Android; unsupported 32-bit terminals are skipped.
+- DECRQCRA rectangle checksum replies and XTCHECKSUM calculation selection are
+  available through `vt-xt-checksum-report = true` in `termux.properties`.
+  The default remains false, as in Ghostty: a program can use single-cell
+  checksum queries to read screen contents left by other programs. The
+  calculation defaults to DEC semantics and RIS restores that default. The
+  option is applied to new sessions, when the Activity reconnects to existing
+  sessions, and on `termux-reload-settings`; an active PTY feed defers the
+  update until its callbacks finish.
+
+The pin also brings terminal fixes without additional host bindings: Wuffs
+zlib decoding for Kitty graphics, clearing stale image-placeholder row flags,
+strict OSC numeric parsing and CAN/SUB cancellation, OSC 105 color reset,
+palette reset on RIS, live/saved cursor repair during resize, safe truncation
+of wide characters, same-size resize handling, paste failure propagation,
+and search lifetime checks. Android's existing key and mouse encoders inherit
+the Ctrl+Alt+Shift+Backspace and UTF-8 extended-button fixes.
+
+The remaining new C APIs were evaluated against current consumers. OSC 133
+prompt markers already update terminal semantic state; the new prompt callback
+provides host events, but the app currently has no command-status, completion
+notification, or command-history UI to consume them. Adding notifications for
+every command would change normal shell behavior, so no such binding is
+introduced. Unknown OSC passthrough is an extension hook, with no additional
+Termux protocol needing it. Snapshot decode-time compression has no consumer
+because this app does not restore native terminal snapshots. Render-state row
+identities and overscan are available upstream, but the renderer already
+caches shaped text by content and scrolls by whole rows; these APIs do not add
+displayed content or avoid current conservative scroll dirty flags.
+
+GTK/EGL/DMABUF, shared desktop render devices, Metal/OpenGL shaders, macOS
+windows and clipboard dialogs, tmux control-mode hosting, the desktop SSH
+terminfo cache, CoreText and Nerd Font tables, Windows DLL startup, themes,
+Nix metadata, translations, and CI changes have no Android host consumer.
+The patch retains only custom glyph introspection/width handling, Kitty
+animation/virtual-placement access (including its I/O accessor), and the
+32-bit page-alignment fix.
+
+Validation for this sync:
+
+- Patched upstream `zig build test-lib-vt -Demit-lib-vt=true -Doptimize=Debug -j4`
+  completed successfully. Debug is required for the upstream tests that assert
+  slow runtime safety is enabled.
+- `:terminal-emulator:testDebugUnitTest`, `:app:testDebugUnitTest`, and
+  `:app:assembleDebug` completed successfully: 150 terminal tests and 45 app
+  tests passed, including compression queue and checksum property coverage.
+- `libghostty-vt` and JNI/Vulkan libraries built for `arm64-v8a`, `armeabi-v7a`,
+  `x86`, and `x86_64`. The four ABI APKs and universal debug APK passed archive,
+  native-library packaging, and signing verification.
+- Device execution was not tested in this sync.
+
 ## 2026-09-25 sync
 
 The pin moved from `d4c88d8069912b653d707191388ca98e24751f12` to

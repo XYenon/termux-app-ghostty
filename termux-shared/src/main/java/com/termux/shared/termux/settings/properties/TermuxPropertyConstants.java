@@ -125,6 +125,9 @@ public final class TermuxPropertyConstants {
     /** Defines the key for whether to use normal IME text input with composition and candidates enabled. */
     public static final String KEY_ENABLE_IME_INPUT = "enable-ime-input"; // Default: true
 
+    /** DECRQCRA/XTCHECKSUM can read previous terminal output, so this is opt-in. */
+    public static final String KEY_VT_XT_CHECKSUM_REPORT = "vt-xt-checksum-report"; // Default: false
+
 
 
     /** Defines the key for whether text for the extra keys buttons should be all capitalized automatically */
@@ -402,6 +405,7 @@ public final class TermuxPropertyConstants {
         KEY_DISABLE_TERMINAL_SESSION_CHANGE_TOAST,
         KEY_ENFORCE_CHAR_BASED_INPUT,
         KEY_ENABLE_IME_INPUT,
+        KEY_VT_XT_CHECKSUM_REPORT,
         KEY_EXTRA_KEYS_TEXT_ALL_CAPS,
         KEY_HIDE_SOFT_KEYBOARD_ON_STARTUP,
         KEY_RUN_TERMUX_AM_SOCKET_SERVER,
@@ -445,6 +449,7 @@ public final class TermuxPropertyConstants {
      * default: false
      */
     public static final Set<String> TERMUX_DEFAULT_FALSE_BOOLEAN_BEHAVIOUR_PROPERTIES_LIST = new HashSet<>(Arrays.asList(
+        KEY_VT_XT_CHECKSUM_REPORT,
         KEY_DISABLE_FILE_SHARE_RECEIVER,
         KEY_DISABLE_FILE_VIEW_RECEIVER,
         KEY_DISABLE_HARDWARE_KEYBOARD_SHORTCUTS,
