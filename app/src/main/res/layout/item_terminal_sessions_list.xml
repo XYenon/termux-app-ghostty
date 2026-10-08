@@ -1,9 +1,27 @@
-<com.google.android.material.textview.MaterialTextView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/session_title"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="fill_parent"
-    android:layout_height="?android:attr/listPreferredItemHeight"
+    android:layout_height="wrap_content"
+    android:minHeight="?android:attr/listPreferredItemHeight"
     android:background="@drawable/session_background_selected"
-    android:ellipsize="marquee"
     android:gravity="start|center_vertical"
+    android:orientation="vertical"
     android:padding="6dip"
-    android:textSize="14sp" />
+    android:descendantFocusability="blocksDescendants">
+
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/session_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="marquee"
+        android:textSize="14sp" />
+
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/session_program_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:textSize="12sp"
+        android:visibility="gone" />
+</LinearLayout>

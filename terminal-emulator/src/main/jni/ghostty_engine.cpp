@@ -351,6 +351,61 @@ void pwd_changed(GhosttyTerminal terminal, void *userdata) {
                         engine->pwd);
 }
 
+void program_status(GhosttyTerminal, void *userdata,
+                    const GhosttyTerminalProgramStatus *report) {
+    auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
+    if (!engine->pending_program_status) return;
+    try {
+        TermuxGhosttyEngine::ProgramStatusEvent event;
+        event.state = report->state;
+        event.kind = report->kind;
+        event.progress = report->progress;
+        event.id.assign(reinterpret_cast<const char *>(report->id.ptr), report->id.len);
+        event.app.assign(reinterpret_cast<const char *>(report->app.ptr), report->app.len);
+        event.title.assign(reinterpret_cast<const char *>(report->title.ptr), report->title.len);
+        event.message.assign(reinterpret_cast<const char *>(report->message.ptr), report->message.len);
+        engine->pending_program_status->push_back(std::move(event));
+    } catch (const std::bad_alloc &) {
+        engine->callback_allocation_failed = true;
+    }
+}
+
+void semantic_prompt(GhosttyTerminal, void *userdata,
+                     const GhosttyTerminalSemanticPrompt *prompt) {
+    auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
+    if (!engine->pending_program_status ||
+        prompt->kind != GHOSTTY_SEMANTIC_PROMPT_PROMPT_START) return;
+    try {
+        TermuxGhosttyEngine::ProgramStatusEvent event;
+        event.prompt = true;
+        engine->pending_program_status->push_back(std::move(event));
+    } catch (const std::bad_alloc &) {
+        engine->callback_allocation_failed = true;
+    }
+}
+
+void notify_program_status(JNIEnv *env, TermuxGhosttyEngine *engine,
+                           const TermuxGhosttyEngine::ProgramStatusEvent &event) {
+    if (event.prompt) {
+        env->CallVoidMethod(engine->output, engine->program_status_prompt_method);
+    } else {
+        jstring id = new_java_string_from_utf8(env, event.id);
+        jstring app = new_java_string_from_utf8(env, event.app);
+        jstring title = new_java_string_from_utf8(env, event.title);
+        jstring message = new_java_string_from_utf8(env, event.message);
+        if (!env->ExceptionCheck() && id && app && title && message) {
+            env->CallVoidMethod(engine->output, engine->program_status_method,
+                                event.state, event.kind, event.progress,
+                                id, app, title, message);
+        }
+        env->DeleteLocalRef(id);
+        env->DeleteLocalRef(app);
+        env->DeleteLocalRef(title);
+        env->DeleteLocalRef(message);
+    }
+    clear_java_exception(env, "program status callback");
+}
+
 void terminal_reset(GhosttyTerminal, void *userdata) {
     auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
     // RIS does not emit title/pwd effects. Clear the cached host state here;
@@ -1151,6 +1206,11 @@ Java_com_termux_terminal_GhosttyTerminal_nativeCreate(
         "(Ljava/lang/String;Ljava/lang/String;)V");
     engine->progress_report_method = env->GetMethodID(
         output_class, "onProgressReport", "(II)V");
+    engine->program_status_method = env->GetMethodID(
+        output_class, "onProgramStatusReport",
+        "(IIILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+    engine->program_status_prompt_method = env->GetMethodID(
+        output_class, "onProgramStatusPrompt", "()V");
     engine->clipboard_write_method = env->GetMethodID(
         output_class, "onOscClipboard", "(I[Ljava/lang/String;[[BZ)I");
     engine->clipboard_permission_method = env->GetMethodID(
@@ -1261,6 +1321,10 @@ Java_com_termux_terminal_GhosttyTerminal_nativeCreate(
     ghostty_terminal_set(engine->terminal,
                          GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT,
                          reinterpret_cast<const void *>(progress_report));
+    ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS,
+                         reinterpret_cast<const void *>(program_status));
+    ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT,
+                         reinterpret_cast<const void *>(semantic_prompt));
     ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE,
                          reinterpret_cast<const void *>(clipboard_write));
     ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ,
@@ -1344,6 +1408,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
         bool has_progress;
         int progress_state;
         int progress_value;
+        std::vector<TermuxGhosttyEngine::ProgramStatusEvent> program_events;
         std::vector<uint8_t> pty_replies;
         bool callback_allocation_failed;
         bool pty_replies_overflow;
@@ -1362,8 +1427,10 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
             engine->clipboard_read_requests_remaining = 16;
             had_before = read_background(engine->terminal, &before);
             engine->pending_pty_writes = &pty_replies;
+            engine->pending_program_status = &program_events;
             ghostty_terminal_vt_write(
                 engine->terminal, buffer.data(), buffer.size());
+            engine->pending_program_status = nullptr;
             engine->pending_pty_writes = nullptr;
             has_after = read_background(engine->terminal, &after);
             new_title = engine->title ? engine->title : "";
@@ -1408,6 +1475,9 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
         if (has_progress) {
             notify_progress_report(engine, progress_state, progress_value);
         }
+        for (const auto &event : program_events) {
+            notify_program_status(env, engine, event);
+        }
         if (had_before != has_after ||
             (had_before && !colors_equal(before, after))) {
             colors_changed(engine);
@@ -1416,6 +1486,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
         {
             ScopedEngineLock lock(engine);
             engine->pending_pty_writes = nullptr;
+            engine->pending_program_status = nullptr;
         }
         throw_illegal_state(env, "Out of memory handling terminal effects");
     }
@@ -1472,6 +1543,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeReset(
         }
         notify_progress_report(
             engine, GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE, -1);
+        notify_program_status(env, engine, TermuxGhosttyEngine::ProgramStatusEvent{});
         if (had_before != has_after ||
             (had_before && !colors_equal(before, after))) {
             colors_changed(engine);

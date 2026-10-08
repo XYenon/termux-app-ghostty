@@ -1,6 +1,7 @@
 package com.termux.app.terminal;
 
 import android.annotation.SuppressLint;
+import android.app.AlertDialog;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Typeface;
@@ -24,6 +25,7 @@ import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
 import com.termux.shared.theme.NightMode;
 import com.termux.shared.theme.ThemeUtils;
 import com.termux.terminal.TerminalSession;
+import com.termux.terminal.ProgramStatusStore;
 
 import java.util.List;
 
@@ -50,20 +52,20 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
         }
 
         TextView sessionTitleView = sessionRowView.findViewById(R.id.session_title);
+        TextView statusView = sessionRowView.findViewById(R.id.session_program_status);
 
         TerminalSession sessionAtRow = getItem(position).getTerminalSession();
         if (sessionAtRow == null) {
             sessionTitleView.setText("null session");
+            statusView.setVisibility(View.GONE);
             return sessionRowView;
         }
 
         boolean shouldEnableDarkTheme = ThemeUtils.shouldEnableDarkTheme(mActivity, NightMode.getAppNightMode().getName());
 
-        if (shouldEnableDarkTheme) {
-            sessionTitleView.setBackground(
-                ContextCompat.getDrawable(mActivity, R.drawable.session_background_black_selected)
-            );
-        }
+        sessionRowView.setBackground(ContextCompat.getDrawable(mActivity,
+            shouldEnableDarkTheme ? R.drawable.session_background_black_selected
+                : R.drawable.session_background_selected));
 
         String name = sessionAtRow.mSessionName;
         String sessionTitle = sessionAtRow.getTitle();
@@ -89,7 +91,42 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
         int defaultColor = shouldEnableDarkTheme ? Color.WHITE : Color.BLACK;
         int color = sessionRunning || sessionAtRow.getExitStatus() == 0 ? defaultColor : Color.RED;
         sessionTitleView.setTextColor(color);
+
+        List<ProgramStatusStore.Record> statuses = sessionAtRow.getProgramStatuses();
+        statusView.setVisibility(statuses.isEmpty() ? View.GONE : View.VISIBLE);
+        statusView.setTextColor(defaultColor);
+        // Newest reports first, with full records available by tapping the summary.
+        String statusText = programStatusText(statuses);
+        statusView.setText(statusText);
+        statusView.setContentDescription(mActivity.getString(
+            R.string.program_status_details, position + 1) + ": " + statusText);
+        statusView.setOnClickListener(view -> new AlertDialog.Builder(mActivity)
+            .setTitle(mActivity.getString(R.string.program_status_details, position + 1))
+            .setMessage(programStatusText(sessionAtRow.getProgramStatuses()))
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton(R.string.program_status_dismiss_finished,
+                (dialog, which) -> sessionAtRow.dismissFinishedProgramStatuses())
+            .show());
         return sessionRowView;
+    }
+
+    private String programStatusText(List<ProgramStatusStore.Record> records) {
+        String[] states = mActivity.getResources().getStringArray(R.array.program_status_states);
+        String[] kinds = mActivity.getResources().getStringArray(R.array.program_status_kinds);
+        StringBuilder text = new StringBuilder();
+        for (int i = records.size() - 1; i >= 0; i--) {
+            ProgramStatusStore.Record record = records.get(i);
+            if (text.length() > 0) text.append("\n\n");
+            text.append(states[record.state]);
+            if (record.kind != ProgramStatusStore.KIND_NONE)
+                text.append(" · ").append(kinds[record.kind]);
+            if (record.progress >= 0) text.append(" · ").append(record.progress).append('%');
+            if (!record.app.isEmpty()) text.append(" · ").append(record.app);
+            if (!record.id.isEmpty()) text.append(" · ").append(record.id);
+            if (!record.title.isEmpty()) text.append(" · ").append(record.title);
+            if (!record.message.isEmpty()) text.append("\n").append(record.message);
+        }
+        return text.toString();
     }
 
     @Override

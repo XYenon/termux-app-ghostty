@@ -24,6 +24,9 @@ public interface TerminalSessionClient {
 
     void onProgressReport(@NonNull TerminalSession session, int state, int progress);
 
+    default void onProgramStatusChanged(@NonNull TerminalSession session) {
+    }
+
     void onSessionFinished(@NonNull TerminalSession finishedSession);
 
     void onCopyTextToClipboard(@NonNull TerminalSession session, String text);

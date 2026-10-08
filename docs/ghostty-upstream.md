@@ -8,6 +8,76 @@ applies `native/patches/ghostty-android.patch`, and builds `libghostty-vt` for
 the configured Android ABIs. Keep the patch limited to C APIs needed by the
 Android JNI and Vulkan renderer.
 
+## 2026-10-09 sync
+
+The pin moved from `c3203ea4b169a18eb2ccfe92847e426d8afea858` to
+`7ec9e26a29399b30ef78f06985fc75045b3cecb6`, the upstream `main` HEAD
+queried for this sync. All 18 commits, including merge commits, and the
+15-file source diff were reviewed ([upstream comparison](https://github.com/ghostty-org/ghostty/compare/c3203ea4b169a18eb2ccfe92847e426d8afea858...7ec9e26a29399b30ef78f06985fc75045b3cecb6)).
+The Android patch applies unchanged and retains the existing glyph, Kitty
+graphics, and 32-bit page-alignment extensions.
+
+OSC 7501 program status is integrated through upstream's
+`GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS` callback, with no new patch API:
+
+- Upstream validates reports and decodes their UTF-8 title/message. Installing
+  the callback enables support-query replies through the existing PTY writer,
+  preserving BEL or ST; reports themselves are never echoed.
+- JNI copies borrowed strings and delivers every report, clear, and OSC 133
+  prompt event in stream order after releasing the native mutex. This preserves
+  reports from multiple tasks, clears followed by updates, and resets followed
+  by new reports in one PTY read.
+- Each `TerminalSession` retains up to 64 records independently of its Activity
+  client. Reports replace entire records, hierarchy clears match ID path
+  segments, and excess records evict the least recently updated entry.
+- A new OSC 133 prompt or process exit removes idle, working, and blocked
+  records. Done/error records remain until the user explicitly dismisses them.
+  RIS and the app's explicit terminal reset clear all records.
+- The session sidebar shows a two-line summary, newest reports first. Tapping
+  it opens all task details, including blocked reasons, progress, app, ID, title,
+  and message. The dialog identifies the originating session and can dismiss
+  finished results. Text is plain text with invisible formatting characters
+  removed. English and Simplified Chinese labels are provided.
+
+The existing OSC 9;4 progress bar remains a separate protocol; collapsing
+7501's multiple records into that single transient percentage would lose
+task identities and blocked/done semantics. Status reports do not generate
+automatic Android notifications, so frequent updates do not interrupt the
+user or add a notification permission requirement.
+
+The pin also inherits terminal fixes for Unicode above U+00FF under legacy
+charsets, SS2/SS3 consumption by combining characters, preserving a character's
+mapping when VS16 widens it across a wrap, line selection across unwritten cells
+at semantic prompt boundaries, and origin-mode cursor coordinates in VT
+serialization. These need no JNI or Vulkan changes. The Danish desktop
+translations and contributor-vouch metadata have no Android consumer.
+
+Validation for this sync:
+
+- Patched upstream `zig build test-lib-vt -Demit-lib-vt=true -Doptimize=Debug -j4`
+  completed successfully, including upstream OSC 7501 parsing, support-query,
+  C callback, split-input, and RIS coverage.
+- `./gradlew --no-daemon prepareNativeSources :terminal-emulator:buildGhosttyAndroid
+  :app:buildGhosttyTerminfo test assembleDebug lint` completed successfully
+  (216 tasks). Debug and release each passed 155 terminal tests and 46 app
+  tests; all modules and both variants reported zero lint issues.
+- New store tests distinguish whole-record replacement, subtree clears from
+  prefix collisions, transient from finished states, update-order eviction,
+  and formatting-control removal. Robolectric native graphics exercised the
+  actual sidebar adapter and dialog, client replacement, prompt cleanup,
+  explicit dismissal, and recycled rows. Default, working, blocked, done,
+  and full-detail renders were captured at 2x and visually inspected.
+- The app test worker now has a 1 GiB heap: the combined graphics and existing
+  64 MiB clipboard boundary tests exhausted Gradle's default 512 MiB heap.
+  No boundary tests were skipped or reduced. Existing SDK XML, target-SDK,
+  NDK ABI metadata, and older `tic` notices remain toolchain warnings.
+- `libghostty-vt` and JNI/Vulkan libraries built for `arm64-v8a`, `armeabi-v7a`,
+  `x86`, and `x86_64`. All four ABI APKs and the universal debug APK passed ZIP,
+  exact native ABI/library, bundled terminfo, and `apksigner verify` checks.
+  Java bytecode descriptors match the two new JNI callback registrations.
+- `git diff --check` passed. No Android device was connected, so JNI/PTY and
+  Vulkan behavior on a real device were not executed in this sync.
+
 ## 2026-10-06 sync
 
 The pin moved from `c959af63d11b524a84c21900372990dbc024b059` to

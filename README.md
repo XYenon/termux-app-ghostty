@@ -32,6 +32,8 @@
   deny) and a 64 MiB payload limit.
 - **OSC 7, OSC 9, OSC 777, OSC 9;4 and OSC 22**: working directory reporting, desktop notifications, a progress bar
   in the terminal layout and mouse-shape queries.
+- **OSC 7501 program status**: per-session task state, progress, and requests for approval, answers, or login,
+  shown in the session sidebar with a tap to view all task details.
 - **Kitty graphics** (inline images, including animations) with a 64 MiB storage limit, and the **Ghostty Glyph
   Protocol** for app-supplied vector glyphs.
 - **Synchronized output** (DEC mode 2026) holds the last complete frame until the program finishes drawing, with a
@@ -64,6 +66,9 @@
   Programs without mouse reporting keep the normal long-press text selection.
 - **Progress and notifications**: OSC 9;4 progress reports show a bar above the terminal, and OSC 9 / OSC 777
   notifications are posted as Android notifications (Android 13+ asks for the notification permission).
+- **Program status**: OSC 7501 reports appear below each session title in the sidebar. Tap the status to see
+  all tasks, including their messages and IDs. Completed and failed tasks stay until you choose `Dismiss finished`;
+  a new OSC 133 prompt or process exit clears active tasks. These reports do not post Android notifications.
 - **Screen checksum reports**: set `vt-xt-checksum-report = true` in `~/.termux/termux.properties` when needed for
   terminal diagnostics. The default is `false`, since a program can query individual cells to recover previous
   screen output. Run `termux-reload-settings` to apply changes to running sessions. XTCHECKSUM selects the

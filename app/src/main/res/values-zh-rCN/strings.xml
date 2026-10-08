@@ -12,6 +12,21 @@
     <string name="shared_user_label">&TERMUX_APP_NAME; 用户</string>
     <string name="terminal_progress_description_default">终端进度</string>
     <string name="terminal_progress_description">终端进度状态 %1$d，值 %2$d</string>
+    <string name="program_status_details">程序状态 · 会话 %1$d</string>
+    <string name="program_status_dismiss_finished">清除已结束的状态</string>
+    <string-array name="program_status_states">
+        <item>空闲</item>
+        <item>正在运行</item>
+        <item>已完成</item>
+        <item>等待操作</item>
+        <item>出错</item>
+    </string-array>
+    <string-array name="program_status_kinds">
+        <item></item>
+        <item>需要授权</item>
+        <item>需要回答</item>
+        <item>需要登录</item>
+    </string-array>
     <string name="permission_run_command_label">在 &TERMUX_APP_NAME; 环境中运行命令</string>
     <string name="permission_run_command_description">在 &TERMUX_APP_NAME; 环境中执行任意命令并访问文件</string>
     <string name="bootstrap_installer_body">正在安装引导程序包…</string>

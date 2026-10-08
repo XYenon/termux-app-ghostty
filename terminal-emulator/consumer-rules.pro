@@ -8,6 +8,8 @@
     public void onMouseShapeChanged(int);
     public void onDesktopNotification(java.lang.String, java.lang.String);
     public void onProgressReport(int, int);
+    public void onProgramStatusReport(int, int, int, java.lang.String, java.lang.String, java.lang.String, java.lang.String);
+    public void onProgramStatusPrompt();
     public int onOscClipboard(int, java.lang.String, byte[], boolean);
     public int onOscClipboard(int, java.lang.String[], byte[][], boolean);
     public int onOscClipboardReadPermission(java.lang.String, boolean, boolean);

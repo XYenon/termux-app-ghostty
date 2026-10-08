@@ -189,6 +189,11 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     }
 
     @Override
+    public void onProgramStatusChanged(@NonNull TerminalSession session) {
+        if (mActivity.isVisible()) termuxSessionListNotifyUpdated();
+    }
+
+    @Override
     public void onTitleChanged(@NonNull TerminalSession updatedSession) {
         if (!mActivity.isVisible()) return;
 

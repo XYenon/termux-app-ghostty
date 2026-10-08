@@ -37,6 +37,15 @@ public abstract class TerminalOutput {
     /** Report an OSC 9;4 progress state and percentage, or -1 if omitted. */
     public abstract void onProgressReport(int state, int progress);
 
+    /** Receive a validated OSC 7501 report with decoded UTF-8 text. */
+    public void onProgramStatusReport(int state, int kind, int progress,
+                                      String id, String app, String title, String message) {
+    }
+
+    /** A fresh OSC 133 shell prompt ends transient program status records. */
+    public void onProgramStatusPrompt() {
+    }
+
     /** Notify the terminal client that text should be copied to clipboard. */
     public abstract void onCopyTextToClipboard(String text);
 

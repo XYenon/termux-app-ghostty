@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -57,6 +58,7 @@ public final class TerminalSession extends TerminalOutput {
     private final byte[] mUtf8InputBuffer = new byte[5];
     private boolean mCloseRequested;
     private boolean mClosed;
+    private final ProgramStatusStore mProgramStatuses = new ProgramStatusStore();
 
     /** Callback which gets notified when a session finishes or changes title. */
     TerminalSessionClient mClient;
@@ -336,6 +338,27 @@ public final class TerminalSession extends TerminalOutput {
         mClient.onProgressReport(this, state, progress);
     }
 
+    @Override
+    public void onProgramStatusReport(int state, int kind, int progress,
+                                      String id, String app, String title, String message) {
+        mProgramStatuses.update(new ProgramStatusStore.Record(
+            state, kind, progress, id, app, title, message));
+        mClient.onProgramStatusChanged(this);
+    }
+
+    @Override
+    public void onProgramStatusPrompt() {
+        if (mProgramStatuses.endActivity()) mClient.onProgramStatusChanged(this);
+    }
+
+    public List<ProgramStatusStore.Record> getProgramStatuses() {
+        return mProgramStatuses.snapshot();
+    }
+
+    public void dismissFinishedProgramStatuses() {
+        if (mProgramStatuses.dismissFinished()) mClient.onProgramStatusChanged(this);
+    }
+
     public synchronized boolean isRunning() {
         return mShellPid != -1;
     }
@@ -510,6 +533,7 @@ public final class TerminalSession extends TerminalOutput {
             if (msg.what == MSG_PROCESS_EXITED) {
                 int exitCode = (Integer) msg.obj;
                 cleanupResources(exitCode);
+                onProgramStatusPrompt();
 
                 String exitDescription = "\r\n[Process completed";
                 if (exitCode > 0) {

@@ -13,7 +13,7 @@ ext {
     nativeSourceRevisions = [
         ghostty: [
             repository: "https://github.com/ghostty-org/ghostty.git",
-            revision: "c3203ea4b169a18eb2ccfe92847e426d8afea858"],
+            revision: "7ec9e26a29399b30ef78f06985fc75045b3cecb6"],
         freetype: [
             repository: "https://github.com/freetype/freetype.git",
             revision: "0a0221a1347e2f1e07c395263540026e9a0aa7c7"],

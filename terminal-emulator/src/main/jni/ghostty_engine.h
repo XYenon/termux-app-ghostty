@@ -20,6 +20,8 @@ struct TermuxGhosttyEngine {
     jmethodID mouse_shape_method;
     jmethodID desktop_notification_method;
     jmethodID progress_report_method;
+    jmethodID program_status_method;
+    jmethodID program_status_prompt_method;
     jmethodID clipboard_write_method;
     jmethodID clipboard_permission_method;
     jmethodID clipboard_mimes_method;
@@ -53,6 +55,16 @@ struct TermuxGhosttyEngine {
     bool pending_progress_report;
     int pending_progress_state;
     int pending_progress_value;
+    struct ProgramStatusEvent {
+        bool prompt = false;
+        int state = GHOSTTY_PROGRAM_STATUS_STATE_CLEAR;
+        int kind = GHOSTTY_PROGRAM_STATUS_KIND_NONE;
+        int progress = -1;
+        std::string id, app, title, message;
+    };
+    // Preserve report/clear/prompt ordering within a PTY feed. Strings are
+    // copied while borrowed upstream data is valid, then delivered unlocked.
+    std::vector<ProgramStatusEvent> *pending_program_status = nullptr;
     struct TermuxVulkanRenderer *renderer;
 
     // When non-null, PTY responses produced reentrantly from a

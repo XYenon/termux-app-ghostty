@@ -136,6 +136,11 @@ android {
     testOptions {
         unitTests {
             includeAndroidResources = true
+            // Native graphics plus the 64 MiB clipboard boundary tests exceed
+            // Gradle's default 512 MiB test-worker heap in a combined run.
+            all {
+                maxHeapSize = "1g"
+            }
         }
     }
 

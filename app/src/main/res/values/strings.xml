@@ -17,6 +17,21 @@
     <string name="shared_user_label">&TERMUX_APP_NAME; user</string>
     <string name="terminal_progress_description_default">Terminal progress</string>
     <string name="terminal_progress_description">Terminal progress state %1$d, value %2$d</string>
+    <string name="program_status_details">Program status · Session %1$d</string>
+    <string name="program_status_dismiss_finished">Dismiss finished</string>
+    <string-array name="program_status_states">
+        <item>Idle</item>
+        <item>Working</item>
+        <item>Done</item>
+        <item>Blocked</item>
+        <item>Error</item>
+    </string-array>
+    <string-array name="program_status_kinds">
+        <item></item>
+        <item>Approval needed</item>
+        <item>Answer needed</item>
+        <item>Login needed</item>
+    </string-array>
 
 
 
