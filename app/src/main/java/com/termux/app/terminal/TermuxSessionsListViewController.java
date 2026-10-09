@@ -95,18 +95,11 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
         List<ProgramStatusStore.Record> statuses = sessionAtRow.getProgramStatuses();
         statusView.setVisibility(statuses.isEmpty() ? View.GONE : View.VISIBLE);
         statusView.setTextColor(defaultColor);
-        // Newest reports first, with full records available by tapping the summary.
+        // Newest reports first, with full records available by tapping the current session.
         String statusText = programStatusText(statuses);
         statusView.setText(statusText);
         statusView.setContentDescription(mActivity.getString(
             R.string.program_status_details, position + 1) + ": " + statusText);
-        statusView.setOnClickListener(view -> new AlertDialog.Builder(mActivity)
-            .setTitle(mActivity.getString(R.string.program_status_details, position + 1))
-            .setMessage(programStatusText(sessionAtRow.getProgramStatuses()))
-            .setPositiveButton(android.R.string.ok, null)
-            .setNeutralButton(R.string.program_status_dismiss_finished,
-                (dialog, which) -> sessionAtRow.dismissFinishedProgramStatuses())
-            .show());
         return sessionRowView;
     }
 
@@ -131,8 +124,19 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
 
     @Override
     public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-        TermuxSession clickedSession = getItem(position);
-        mActivity.getTermuxTerminalSessionClient().setCurrentSession(clickedSession.getTerminalSession());
+        TerminalSession clickedSession = getItem(position).getTerminalSession();
+        if (clickedSession != null && clickedSession == mActivity.getCurrentSession()
+            && !clickedSession.getProgramStatuses().isEmpty()) {
+            new AlertDialog.Builder(mActivity)
+                .setTitle(mActivity.getString(R.string.program_status_details, position + 1))
+                .setMessage(programStatusText(clickedSession.getProgramStatuses()))
+                .setPositiveButton(android.R.string.ok, null)
+                .setNeutralButton(R.string.program_status_dismiss_finished,
+                    (dialog, which) -> clickedSession.dismissFinishedProgramStatuses())
+                .show();
+            return;
+        }
+        mActivity.getTermuxTerminalSessionClient().setCurrentSession(clickedSession);
         mActivity.getDrawer().closeDrawers();
     }
 
