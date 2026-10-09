@@ -34,8 +34,6 @@
     <string name="bootstrap_error_body">&TERMUX_APP_NAME; 无法安装引导程序包。</string>
     <string name="bootstrap_error_abort">中止</string>
     <string name="bootstrap_error_try_again">重试</string>
-    <string name="bootstrap_error_apk_bootstrap_variant_min_sdk_incompatible">当前安装的 &TERMUX_APP_NAME; 应用的 APK 引导程序变体 %1$s 与设备的 Android %2$s（sdk `%3$d`）不兼容，它要求最低 Android 版本为 %4$s（sdk `%5$d`）。\n\n请卸载 &TERMUX_APP_NAME; 应用并重新安装正确的 APK 构建变体。</string>
-    <string name="bootstrap_error_apk_bootstrap_variant_max_sdk_incompatible">当前安装的 &TERMUX_APP_NAME; 应用的 APK 引导程序变体 %1$s 与设备的 Android %2$s（sdk `%3$d`）不兼容，它要求最高 Android 版本为 %4$s（sdk `%5$d`）。\n\n请卸载 &TERMUX_APP_NAME; 应用并重新安装正确的 APK 构建变体。</string>
     <string name="bootstrap_error_not_primary_user_message">&TERMUX_APP_NAME; 只能由主用户运行。\n为 &TERMUX_APP_NAME; 编译的引导程序二进制文件已硬编码 $PREFIX 路径，无法安装到以下路径之外的位置：\n%1$s。</string>
     <string name="bootstrap_error_installed_on_portable_sd">&TERMUX_APP_NAME; 无法安装在设备的便携式/外置/可移除 SD 卡上。\n为 &TERMUX_APP_NAME; 编译的引导程序二进制文件已硬编码 $PREFIX 路径，无法安装到以下路径之外的位置：\n%1$s。</string>
     <string name="action_new_session">新建会话</string>

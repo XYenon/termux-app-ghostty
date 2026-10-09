@@ -3,6 +3,7 @@ apply plugin: 'maven-publish'
 
 android {
     compileSdkVersion project.properties.compileSdkVersion.toInteger()
+    ndkVersion project.properties.ndkVersion
 
     dependencies {
         // These UI libraries are pinned to the AGP 4.2 / compileSdk 30 stack.
@@ -44,6 +45,10 @@ android {
             ndkBuild {
                 cppFlags ''
             }
+        }
+
+        ndk {
+            abiFilters(*rootProject.ext.requestedAbis)
         }
     }
 

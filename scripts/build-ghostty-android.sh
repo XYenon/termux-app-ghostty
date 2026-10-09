@@ -7,6 +7,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NATIVE_SOURCES_DIR="${NATIVE_SOURCES_DIR:-$ROOT_DIR/build/native-sources}"
 GHOSTTY_BASE_SRC="$NATIVE_SOURCES_DIR/ghostty"
 GHOSTTY_SRC="${GHOSTTY_PATCHED_SRC:-$ROOT_DIR/terminal-emulator/build/ghostty-source}"
+# The patched source is recreated on every run, so keep Zig's local cache outside it.
+ZIG_LOCAL_CACHE_DIR="${GHOSTTY_ZIG_LOCAL_CACHE_DIR:-$ROOT_DIR/terminal-emulator/build/ghostty-zig-cache}"
 ZIG_VERSION="${ZIG_VERSION:?}"
 ZIG="${ZIG:-$(command -v zig || command -v python-zig || true)}"
 ANDROID_NDK_VERSION="${ANDROID_NDK_VERSION:?}"
@@ -55,6 +57,7 @@ for android_abi in "${requested_abis[@]}"; do
         cd "$GHOSTTY_SRC"
         ANDROID_NDK_HOME="$ANDROID_NDK_HOME" "$ZIG" build \
             --prefix "$output_dir" \
+            --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
             -Demit-lib-vt=true \
             -Dtarget="$zig_target.$ANDROID_API_LEVEL" \
             -Doptimize=ReleaseFast \

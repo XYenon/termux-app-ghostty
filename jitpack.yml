@@ -1,7 +1,5 @@
 jdk:
   - openjdk11
-env:
-  JITPACK_NDK_VERSION: "29.0.14206865"
 before_install:
   - pip3 install --user ziglang==0.16.0
   - sudo ln -sf "$(python3 -c 'import os, ziglang; print(os.path.join(os.path.dirname(ziglang.__file__), "zig"))')" /usr/local/bin/zig

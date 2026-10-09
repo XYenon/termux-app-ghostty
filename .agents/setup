@@ -98,9 +98,7 @@ emulator_image="system-images;android-30;default;$emulator_abi"
     sdk_packages+=("build-tools;30.0.2")
 [[ -x "$android_sdk_root/build-tools/30.0.3/aapt" ]] || \
     sdk_packages+=("build-tools;30.0.3")
-# Android Gradle Plugin 4.2.2 uses this NDK for termux-shared's ndkBuild project.
-[[ -d "$android_sdk_root/ndk/21.4.7075529/toolchains/llvm/prebuilt" ]] || \
-    sdk_packages+=("ndk;21.4.7075529")
+# Every native module uses ndkVersion from gradle.properties.
 [[ -d "$android_sdk_root/ndk/29.0.14206865/toolchains/llvm/prebuilt" ]] || \
     sdk_packages+=("ndk;29.0.14206865")
 [[ -x "$android_sdk_root/cmake/3.22.1/bin/cmake" ]] || \

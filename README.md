@@ -79,9 +79,14 @@
 
 ### Platform, build and development
 
-- `minSdkVersion` 21 → 29, so Android 10+ is required and the `apt-android-5`
-  (Android 5/6) variant is no longer supported. `targetSdkVersion` remains 28 to allow executing bootstrap
-  and shell binaries in writable app data.
+- `minSdkVersion` 21 → 29, so Android 10+ is required and only the `apt-android-7` bootstrap variant is built;
+  `TERMUX_PACKAGE_VARIANT=apt-android-5` (Android 5/6) is rejected when Gradle configures the project, and the
+  app no longer carries the runtime bootstrap min/max Android version check. `targetSdkVersion` remains 28 to allow
+  executing bootstrap and shell binaries in writable app data.
+- The `TERMUX_ABIS` environment variable (default: `defaultAndroidAbis` in `gradle.properties`) selects the ABIs
+  for every native module, the downloaded bootstraps and the APKs, e.g.
+  `TERMUX_ABIS=arm64-v8a ./gradlew :app:assembleDebug` builds only `arm64-v8a`. All native modules use the
+  `ndkVersion` from `gradle.properties`.
 - App version `0.200.0-beta.1` (versionCode `2050`) instead of `0.119.0-beta.3` (`1022`), plus the
   `POST_NOTIFICATIONS` permission.
 - APKs are built by the `Build` workflow on the `ghostty` branch for all five ABIs (debug and release, with SHA-256
@@ -146,9 +151,9 @@ Latest version is `v0.118.1`.
 
 **NOTICE: It is highly recommended that you update to `v0.118.0` or higher ASAP for various bug fixes, including a critical world-readable vulnerability reported [here](https://termux.github.io/general/2022/02/15/termux-apps-vulnerability-disclosures.html). See [below](#google-play-store-experimental-branch) for information regarding Termux on Google Play.**
 
-Termux can be obtained through various sources listed below for **only** Android `>= 7` with full support for apps and packages.
+Termux can be obtained through various sources listed below for **only** Android `>= 7` with full support for apps and packages. This fork requires Android `>= 10` (API 29).
 
-Support for both app and packages was dropped for Android `5` and `6` on [2020-01-01](https://www.reddit.com/r/termux/comments/dnzdbs/end_of_android56_support_on_20200101/) at `v0.83`, however it was re-added just for the app *without any support for package updates* on [2022-05-24](https://github.com/termux/termux-app/pull/2740) via the [GitHub](#github) sources. Check [here](https://github.com/termux/termux-app/wiki/Termux-on-android-5-or-6) for the details.
+Upstream dropped support for both app and packages for Android `5` and `6` on [2020-01-01](https://www.reddit.com/r/termux/comments/dnzdbs/end_of_android56_support_on_20200101/) at `v0.83`, and later re-added just the app via `apt-android-5` [GitHub](#github) builds *without any support for package updates* on [2022-05-24](https://github.com/termux/termux-app/pull/2740). This fork does not build `apt-android-5` variants.
 
 The APK files of different sources are signed with different signature keys. The `Termux` app and all its plugins use the same [`sharedUserId`](https://developer.android.com/guide/topics/manifest/manifest-element) `com.termux` and so all their APKs installed on a device must have been signed with the same signature key to work together and so they must all be installed from the same source. Do not attempt to mix them together, i.e do not try to install an app or plugin from `F-Droid` and another one from a different source like `GitHub`. Android Package Manager will also normally not allow installation of APKs with different signatures and you will get errors on installation like `App not installed`, `Failed to install due to an unknown error`, `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, `INSTALL_FAILED_SHARED_USER_INCOMPATIBLE`, `signatures do not match previously installed version`, etc. This restriction can be bypassed with root or with custom roms.
 
@@ -170,7 +175,7 @@ Only a universal APK is released, which will work on all supported architectures
 
 ### GitHub
 
-Termux application can be obtained on `GitHub` either from [`GitHub Releases`](https://github.com/termux/termux-app/releases) for version `>= 0.118.0` or from [`GitHub Build Action`](https://github.com/termux/termux-app/actions/workflows/debug_build.yml?query=branch%3Amaster+event%3Apush) workflows. **For android `>= 7`, only install `apt-android-7` variants. For android `5` and `6`, only install `apt-android-5` variants.**
+Termux application can be obtained on `GitHub` either from [`GitHub Releases`](https://github.com/termux/termux-app/releases) for version `>= 0.118.0` or from [`GitHub Build Action`](https://github.com/termux/termux-app/actions/workflows/debug_build.yml?query=branch%3Amaster+event%3Apush) workflows. **For android `>= 7`, only install `apt-android-7` variants. For android `5` and `6`, only install `apt-android-5` variants.** This fork only publishes `apt-android-7` variants.
 
 The APKs for `GitHub Releases` will be listed under `Assets` drop-down of a release. These are automatically attached when a new version is released.
 

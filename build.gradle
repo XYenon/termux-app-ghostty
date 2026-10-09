@@ -8,7 +8,21 @@ buildscript {
     }
 }
 
+def supportedAndroidAbis = ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"]
+def requestedAndroidAbis = (System.getenv("TERMUX_ABIS") ?: project.properties.defaultAndroidAbis)
+    .split(",").collect { it.trim() }.findAll { it }.unique()
+if (requestedAndroidAbis.isEmpty()) {
+    throw new GradleException("TERMUX_ABIS must list at least one Android ABI")
+}
+def unsupportedAndroidAbis = requestedAndroidAbis - supportedAndroidAbis
+if (unsupportedAndroidAbis) {
+    throw new GradleException("Unsupported Android ABIs in TERMUX_ABIS: " +
+        unsupportedAndroidAbis.join(",") + ". Supported: " + supportedAndroidAbis.join(","))
+}
+
 ext {
+    // Android ABIs shared by app, terminal-emulator and termux-shared native builds and APK packaging.
+    requestedAbis = requestedAndroidAbis.asImmutable()
     nativeSourcesDir = new File(rootProject.projectDir, "build/native-sources")
     nativeSourceRevisions = [
         ghostty: [

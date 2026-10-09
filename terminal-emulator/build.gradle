@@ -5,13 +5,14 @@ def nativeSourcesDir = rootProject.ext.nativeSourcesDir
 def libpngSrc = new File(nativeSourcesDir, "libpng")
 def freetypeSrc = new File(nativeSourcesDir, "freetype")
 def harfbuzzSrc = new File(nativeSourcesDir, "harfbuzz")
-def requestedAbis = (System.getenv("TERMUX_ABIS") ?:
-    project.properties.defaultAndroidAbis).split(",") as List
+def requestedAbis = rootProject.ext.requestedAbis
 def ghosttyRoot = new File(project.buildDir, "ghostty").absolutePath
+// Keep Zig's local cache outside ghostty-source, which the build script recreates on every run.
+def ghosttyZigLocalCache = new File(project.buildDir, "ghostty-zig-cache").absolutePath
 
 android {
     compileSdkVersion project.properties.compileSdkVersion.toInteger()
-    ndkVersion = System.getenv("JITPACK_NDK_VERSION") ?: project.properties.ndkVersion
+    ndkVersion project.properties.ndkVersion
 
     defaultConfig {
         minSdkVersion project.properties.minSdkVersion.toInteger()
@@ -75,6 +76,11 @@ tasks.register("buildGhosttyAndroid", Exec) {
     environment "LIBPNG_REVISION",
         rootProject.ext.nativeSourceRevisions.libpng.revision
     environment "NATIVE_SOURCES_DIR", nativeSourcesDir.absolutePath
+    environment "GHOSTTY_ZIG_LOCAL_CACHE_DIR", ghosttyZigLocalCache
+    inputs.property "apiLevel", project.properties.minSdkVersion
+    inputs.property "ndkVersion", project.properties.ndkVersion
+    inputs.property "zigVersion", project.properties.zigVersion
+    inputs.property "abis", requestedAbis.join(",")
     inputs.files(
         rootProject.file("native/patches/ghostty-android.patch"),
         rootProject.file("scripts/build-ghostty-android.sh"),
