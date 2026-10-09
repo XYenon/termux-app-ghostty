@@ -42,8 +42,14 @@ struct TermuxGhosttyEngine {
     GhosttyRenderStateRowCells row_cells;
     GhosttySearch search;
 
-    char *title;
-    char *pwd;
+    // Last title/pwd published to Java. The change callbacks only mark them
+    // dirty; nativeFeed reads and compares the terminal values on demand.
+    std::string title;
+    std::string pwd;
+    bool title_dirty;
+    bool pwd_dirty;
+    // Reused VT input copy for nativeFeed; only touched under the mutex.
+    std::vector<uint8_t> feed_buffer;
     int mouse_shape;
     bool pending_desktop_notification;
     std::string pending_notification_title;

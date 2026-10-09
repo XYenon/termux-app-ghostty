@@ -68,12 +68,35 @@ public class ProgramStatusStoreTest {
         ProgramStatusStore store = new ProgramStatusStore();
         for (int i = 0; i < 64; i++) store.update(report("job" + i, WORKING));
         assertEquals(64, store.snapshot().size());
-        store.update(report("job0", DONE));
+        store.update(report("job0", WORKING));
         store.update(report("job64", BLOCKED));
         assertEquals(64, store.snapshot().size());
         assertEquals("job2", store.snapshot().get(0).id);
         assertEquals("job0", store.snapshot().get(62).id);
         assertEquals("job64", store.snapshot().get(63).id);
+    }
+
+    @Test
+    public void snapshotsStayIndependentAcrossPromptDismissAndClear() {
+        ProgramStatusStore store = new ProgramStatusStore();
+        assertFalse(store.update(report("", CLEAR)));
+        store.update(report("active", WORKING));
+        store.update(report("finished", DONE));
+        List<Record> original = store.snapshot();
+
+        assertFalse(store.update(report("missing", CLEAR)));
+        assertTrue(store.endActivity());
+        assertEquals(1, store.snapshot().size());
+        assertEquals("finished", store.snapshot().get(0).id);
+        assertTrue(store.dismissFinished());
+        assertTrue(store.snapshot().isEmpty());
+        assertEquals(2, original.size());
+
+        store.update(report("new", ERROR));
+        List<Record> beforeClear = store.snapshot();
+        assertTrue(store.update(report("", CLEAR)));
+        assertTrue(store.snapshot().isEmpty());
+        assertEquals("new", beforeClear.get(0).id);
     }
 
     @Test

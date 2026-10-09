@@ -12,10 +12,10 @@ index cfa1017e..48a31ee1 100644
  #include <ghostty/vt/grid_ref.h>
 diff --git a/include/ghostty/vt/glyph.h b/include/ghostty/vt/glyph.h
 new file mode 100644
-index 00000000..02f26c6a
+index 00000000..898c8272
 --- /dev/null
 +++ b/include/ghostty/vt/glyph.h
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,93 @@
 +/**
 + * @file glyph.h
 + *
@@ -75,9 +75,15 @@ index 00000000..02f26c6a
 +  bool on_curve;
 +} GhosttyGlyphPoint;
 +
++/**
++ * Get the glossary generation, which changes on every register, clear, and
++ * full reset. When out_count is non-NULL it receives the number of currently
++ * registered glyphs so renderers can skip per-cell lookups when it is zero.
++ */
 +GHOSTTY_API GhosttyResult ghostty_glyph_generation(
 +    GhosttyTerminal terminal,
-+    uint64_t* out_generation);
++    uint64_t* out_generation,
++    size_t* out_count);
 +
 +GHOSTTY_API GhosttyResult ghostty_glyph_info(
 +    GhosttyTerminal terminal,
@@ -301,10 +307,10 @@ index 4f4f0ae0..de575c72 100644
      if (self.kitty_dnd) |dnd| dnd.chunking = .{};
 diff --git a/src/terminal/c/glyph.zig b/src/terminal/c/glyph.zig
 new file mode 100644
-index 00000000..0cc4e2b3
+index 00000000..27e4b274
 --- /dev/null
 +++ b/src/terminal/c/glyph.zig
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,137 @@
 +const std = @import("std");
 +const lib = @import("../lib.zig");
 +const Result = @import("result.zig").Result;
@@ -356,10 +362,12 @@ index 00000000..0cc4e2b3
 +pub fn generation(
 +    terminal_: terminal_c.Terminal,
 +    out: ?*u64,
++    out_count: ?*usize,
 +) callconv(lib.calling_conv) Result {
 +    const terminal = terminal_c.zigTerminal(terminal_) orelse
 +        return .invalid_value;
 +    (out orelse return .invalid_value).* = terminal.glyph_glossary_generation;
++    if (out_count) |count| count.* = terminal.glyph_glossary.entries.count();
 +    return .success;
 +}
 +

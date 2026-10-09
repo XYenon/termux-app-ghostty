@@ -116,6 +116,19 @@ struct RenderCell {
     std::string text;
 };
 
+struct KittyDrawPlacement {
+    uint32_t image_id;
+    int64_t destination_x;
+    int64_t destination_y;
+    uint32_t pixel_width;
+    uint32_t pixel_height;
+    uint32_t source_x;
+    uint32_t source_y;
+    uint32_t source_width;
+    uint32_t source_height;
+    int32_t z;
+};
+
 struct CursorFrameState {
     bool drawn = false;
     uint16_t x = 0;
@@ -207,7 +220,14 @@ struct TermuxVulkanRenderer {
     uint64_t kitty_generation = 0;
     std::map<uint32_t, CachedGlyph> glyphs;
     std::vector<RenderCell> render_cells;
+    // Visible Kitty placements, sorted once per composed frame for all layers.
+    std::vector<KittyDrawPlacement> kitty_placements;
+    std::vector<GhosttyKittyGraphicsVirtualPlacementRenderInfo>
+        kitty_virtual_placements;
+    bool kitty_frame_has_placements = false;
     std::vector<uint8_t> frame;
+    uint32_t frame_width = 0;
+    uint32_t frame_height = 0;
     bool frame_initialized = false;
     bool frame_pending_upload = false;
     bool frame_cursor_initialized = false;
@@ -218,6 +238,7 @@ struct TermuxVulkanRenderer {
     uint16_t pending_rows = 0;
     uint32_t requested_width = 0;
     uint32_t requested_height = 0;
+    bool swapchain_resize_failed = false;
 };
 
 namespace {
@@ -1287,19 +1308,6 @@ static_assert(kitty_destination_coordinate(INT32_MIN, UINT32_MAX, 0) < 0);
 static_assert(kitty_destination_coordinate(
     INT32_MAX, UINT32_MAX, UINT32_MAX) > INT32_MAX);
 
-struct KittyDrawPlacement {
-    uint32_t image_id;
-    int64_t destination_x;
-    int64_t destination_y;
-    uint32_t pixel_width;
-    uint32_t pixel_height;
-    uint32_t source_x;
-    uint32_t source_y;
-    uint32_t source_width;
-    uint32_t source_height;
-    int32_t z;
-};
-
 bool kitty_placement_in_layer(int32_t z, GhosttyKittyPlacementLayer layer) {
     constexpr int32_t kBackgroundLimit = INT32_MIN / 2;
     switch (layer) {
@@ -1316,85 +1324,82 @@ bool kitty_placement_in_layer(int32_t z, GhosttyKittyPlacementLayer layer) {
     }
 }
 
-void draw_kitty_layer(TermuxVulkanRenderer *renderer,
-                      GhosttyKittyPlacementLayer layer) {
-    GhosttyKittyGraphics graphics = nullptr;
-    if (ghostty_terminal_get(renderer->engine->terminal,
-                             GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS,
-                             &graphics) != GHOSTTY_SUCCESS || !graphics) return;
+// Collects every visible pin and virtual placement once per composed frame.
+// Pin placements precede virtual ones before the stable z/image sort, so
+// filtering the result by layer keeps the per-layer draw order unchanged.
+void collect_kitty_placements(TermuxVulkanRenderer *renderer,
+                              GhosttyKittyGraphics graphics) {
+    std::vector<KittyDrawPlacement> &placements = renderer->kitty_placements;
+    placements.clear();
+    GhosttyTerminal terminal = renderer->engine->terminal;
     GhosttyKittyGraphicsPlacementIterator iterator = nullptr;
-    if (ghostty_kitty_graphics_placement_iterator_new(nullptr, &iterator) !=
-        GHOSTTY_SUCCESS) return;
-    std::vector<KittyDrawPlacement> placements;
-    ghostty_kitty_graphics_placement_iterator_set(
-        iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER,
-        &layer);
-    if (ghostty_kitty_graphics_get(
-            graphics, GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
-            &iterator) != GHOSTTY_SUCCESS) {
+    if (ghostty_kitty_graphics_placement_iterator_new(nullptr, &iterator) ==
+        GHOSTTY_SUCCESS) {
+        if (ghostty_kitty_graphics_get(
+                graphics, GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
+                &iterator) == GHOSTTY_SUCCESS) {
+            while (ghostty_kitty_graphics_placement_next(iterator)) {
+                uint32_t image_id = 0;
+                bool is_virtual = false;
+                uint32_t offset_x = 0;
+                uint32_t offset_y = 0;
+                int32_t z = 0;
+                ghostty_kitty_graphics_placement_get(
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
+                    &image_id);
+                ghostty_kitty_graphics_placement_get(
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL,
+                    &is_virtual);
+                if (is_virtual) continue;
+                GhosttyKittyGraphicsImage image =
+                    ghostty_kitty_graphics_image(graphics, image_id);
+                if (!image) continue;
+                ghostty_kitty_graphics_image_get(
+                    image, GHOSTTY_KITTY_IMAGE_DATA_ID, &image_id);
+                ghostty_kitty_graphics_placement_get(
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET,
+                    &offset_x);
+                ghostty_kitty_graphics_placement_get(
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET,
+                    &offset_y);
+                ghostty_kitty_graphics_placement_get(
+                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z, &z);
+                GhosttyKittyGraphicsPlacementRenderInfo info{};
+                info.size = sizeof(info);
+                if (ghostty_kitty_graphics_placement_render_info(
+                        iterator, image, terminal, &info) != GHOSTTY_SUCCESS ||
+                    !info.viewport_visible || info.pixel_width == 0 ||
+                    info.pixel_height == 0) continue;
+
+                placements.push_back({
+                    image_id,
+                    kitty_destination_coordinate(
+                        info.viewport_col, renderer->fonts.cell_width,
+                        offset_x),
+                    kitty_destination_coordinate(
+                        info.viewport_row, renderer->fonts.cell_height,
+                        offset_y),
+                    info.pixel_width, info.pixel_height, info.source_x,
+                    info.source_y, info.source_width, info.source_height, z,
+                });
+            }
+        }
         ghostty_kitty_graphics_placement_iterator_free(iterator);
-        return;
     }
-
-    while (ghostty_kitty_graphics_placement_next(iterator)) {
-        uint32_t image_id = 0;
-        bool is_virtual = false;
-        uint32_t offset_x = 0;
-        uint32_t offset_y = 0;
-        int32_t z = 0;
-        ghostty_kitty_graphics_placement_get(
-            iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
-            &image_id);
-        ghostty_kitty_graphics_placement_get(
-            iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL,
-            &is_virtual);
-        if (is_virtual) continue;
-        GhosttyKittyGraphicsImage image =
-            ghostty_kitty_graphics_image(graphics, image_id);
-        if (!image) continue;
-        ghostty_kitty_graphics_image_get(
-            image, GHOSTTY_KITTY_IMAGE_DATA_ID, &image_id);
-        ghostty_kitty_graphics_placement_get(
-            iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET,
-            &offset_x);
-        ghostty_kitty_graphics_placement_get(
-            iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET,
-            &offset_y);
-        ghostty_kitty_graphics_placement_get(
-            iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z, &z);
-        GhosttyKittyGraphicsPlacementRenderInfo info{};
-        info.size = sizeof(info);
-        if (ghostty_kitty_graphics_placement_render_info(
-                iterator, image, renderer->engine->terminal, &info) !=
-                GHOSTTY_SUCCESS || !info.viewport_visible ||
-            info.pixel_width == 0 || info.pixel_height == 0) continue;
-
-        int64_t destination_x = kitty_destination_coordinate(
-            info.viewport_col, renderer->fonts.cell_width, offset_x);
-        int64_t destination_y = kitty_destination_coordinate(
-            info.viewport_row, renderer->fonts.cell_height, offset_y);
-        placements.push_back({
-            image_id, destination_x, destination_y, info.pixel_width,
-            info.pixel_height, info.source_x, info.source_y,
-            info.source_width, info.source_height, z,
-        });
-    }
-    ghostty_kitty_graphics_placement_iterator_free(iterator);
 
     size_t count = 0;
     GhosttyResult result = ghostty_kitty_graphics_virtual_placements(
-        renderer->engine->terminal, nullptr, 0, &count);
+        terminal, nullptr, 0, &count);
     if (count > 0 &&
         (result == GHOSTTY_SUCCESS || result == GHOSTTY_OUT_OF_SPACE)) {
-        std::vector<GhosttyKittyGraphicsVirtualPlacementRenderInfo>
-            virtuals(count);
-        for (auto &placement : virtuals)
-            placement.size = sizeof(placement);
+        auto &virtuals = renderer->kitty_virtual_placements;
+        virtuals.resize(count);
+        for (auto &placement : virtuals) placement.size = sizeof(placement);
         if (ghostty_kitty_graphics_virtual_placements(
-                renderer->engine->terminal, virtuals.data(),
-                virtuals.size(), &count) == GHOSTTY_SUCCESS) {
-            for (const auto &placement : virtuals) {
-                if (!kitty_placement_in_layer(placement.z, layer)) continue;
+                terminal, virtuals.data(), virtuals.size(), &count) ==
+            GHOSTTY_SUCCESS) {
+            for (size_t i = 0; i < std::min(count, virtuals.size()); ++i) {
+                const auto &placement = virtuals[i];
                 placements.push_back({
                     placement.image_id,
                     kitty_destination_coordinate(
@@ -1422,7 +1427,13 @@ void draw_kitty_layer(TermuxVulkanRenderer *renderer,
             return left.z < right.z ||
                 (left.z == right.z && left.image_id < right.image_id);
         });
-    for (const auto &placement : placements) {
+}
+
+void draw_kitty_layer(TermuxVulkanRenderer *renderer,
+                      GhosttyKittyGraphics graphics,
+                      GhosttyKittyPlacementLayer layer) {
+    for (const auto &placement : renderer->kitty_placements) {
+        if (!kitty_placement_in_layer(placement.z, layer)) continue;
         draw_kitty_image(
             renderer, graphics, placement.image_id, placement.destination_x,
             placement.destination_y, placement.pixel_width,
@@ -1432,17 +1443,19 @@ void draw_kitty_layer(TermuxVulkanRenderer *renderer,
     }
 }
 
-bool get_kitty_graphics_generation(TermuxVulkanRenderer *renderer,
-                                  uint64_t *generation) {
+bool get_kitty_graphics(TermuxVulkanRenderer *renderer,
+                        GhosttyKittyGraphics *graphics,
+                        uint64_t *generation) {
+    *graphics = nullptr;
     *generation = 0;
-    GhosttyKittyGraphics graphics = nullptr;
     if (ghostty_terminal_get(renderer->engine->terminal,
                              GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS,
-                             &graphics) != GHOSTTY_SUCCESS || !graphics) {
+                             graphics) != GHOSTTY_SUCCESS || !*graphics) {
+        *graphics = nullptr;
         return false;
     }
     return ghostty_kitty_graphics_get(
-               graphics, GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION,
+               *graphics, GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION,
                generation) == GHOSTTY_SUCCESS;
 }
 
@@ -1482,22 +1495,31 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
     ghostty_render_state_get(engine->render_state,
                              GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
     uint64_t glyph_generation = 0;
+    size_t glyph_count = 0;
     bool glyphs_available =
-        ghostty_glyph_generation(engine->terminal, &glyph_generation) ==
-        GHOSTTY_SUCCESS;
+        ghostty_glyph_generation(engine->terminal, &glyph_generation,
+                                 &glyph_count) == GHOSTTY_SUCCESS;
+    // The generation still advances on clear/reset when the glossary becomes
+    // empty, so cached glyphs are invalidated even if no lookup follows.
     bool glyphs_changed = glyphs_available &&
         glyph_generation != renderer->glyph_generation;
     if (glyphs_changed) {
         renderer->glyphs.clear();
         renderer->glyph_generation = glyph_generation;
     }
+    // Skip per-cell glossary lookups (and negative cache entries) entirely
+    // while no glyph is registered.
+    const bool use_glyphs = glyphs_available && glyph_count > 0;
     size_t frame_size = static_cast<size_t>(renderer->extent.width) *
         renderer->extent.height * 4;
     bool dimensions_changed = renderer->frame.size() != frame_size ||
+        renderer->frame_width != renderer->extent.width ||
+        renderer->frame_height != renderer->extent.height ||
         cols != renderer->last_cols || rows != renderer->last_rows;
+    GhosttyKittyGraphics kitty_graphics_handle = nullptr;
     uint64_t kitty_generation = 0;
-    bool kitty_generation_available = get_kitty_graphics_generation(
-        renderer, &kitty_generation);
+    bool kitty_generation_available = get_kitty_graphics(
+        renderer, &kitty_graphics_handle, &kitty_generation);
     bool kitty_changed = kitty_generation_available &&
         kitty_generation != renderer->kitty_generation;
 
@@ -1545,19 +1567,32 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
         return true;
     }
 
-    bool kitty_graphics = kitty_generation_available && kitty_generation != 0;
+    // Collect placements once for all three layers.
+    if (kitty_generation_available && kitty_generation != 0) {
+        collect_kitty_placements(renderer, kitty_graphics_handle);
+    } else {
+        renderer->kitty_placements.clear();
+    }
+    const bool kitty_graphics =
+        kitty_graphics_handle && !renderer->kitty_placements.empty();
+    // Images composite across rows, so redraw everything while any placement
+    // is visible, when the previous frame had one, or when the image
+    // generation changed and stale pixels must be cleared.
     bool full_redraw = !renderer->frame_initialized || dimensions_changed ||
         glyphs_changed || kitty_changed || kitty_graphics ||
+        renderer->kitty_frame_has_placements ||
         dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL;
     ghostty_render_state_get(engine->render_state,
                              GHOSTTY_RENDER_STATE_DATA_COLORS, &colors);
 
     renderer->frame.resize(frame_size);
+    renderer->frame_width = renderer->extent.width;
+    renderer->frame_height = renderer->extent.height;
     if (full_redraw) {
         fill_frame_rect(renderer, 0, 0, renderer->extent.width,
                         renderer->extent.height, colors.background);
         if (kitty_graphics)
-            draw_kitty_layer(renderer,
+            draw_kitty_layer(renderer, kitty_graphics_handle,
                              GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
         fill_frame_rect(renderer, 0, 0, cols * renderer->fonts.cell_width,
                         rows * renderer->fonts.cell_height, colors.background);
@@ -1682,15 +1717,15 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
     }
 
     if (kitty_graphics)
-        draw_kitty_layer(renderer,
+        draw_kitty_layer(renderer, kitty_graphics_handle,
                          GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
 
     for (const auto &cell : renderer->render_cells) {
-        draw_cell_content(renderer, cell, glyphs_available, cell.foreground);
+        draw_cell_content(renderer, cell, use_glyphs, cell.foreground);
     }
 
     if (kitty_graphics)
-        draw_kitty_layer(renderer,
+        draw_kitty_layer(renderer, kitty_graphics_handle,
                          GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
 
     if (current_cursor.drawn) {
@@ -1738,12 +1773,13 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
             fill_frame_rect(renderer, left, top, right, bottom, cursor_color);
         }
         if (solid_block && cursor_cell) {
-            draw_cell_content(renderer, *cursor_cell, glyphs_available,
+            draw_cell_content(renderer, *cursor_cell, use_glyphs,
                               colors.background);
         }
     }
     renderer->frame_cursor = current_cursor;
     renderer->frame_cursor_initialized = true;
+    renderer->kitty_frame_has_placements = kitty_graphics;
     if (kitty_generation_available)
         renderer->kitty_generation = kitty_generation;
     *frame_changed = true;
@@ -1886,6 +1922,12 @@ bool create_swapchain(TermuxVulkanRenderer *renderer, std::string *error) {
                             renderer->images.data());
     renderer->image_initialized.assign(count, false);
     renderer->frame_initialized = false;
+    __android_log_print(
+        ANDROID_LOG_DEBUG, LOG_TAG,
+        "Surface size: requested %ux%u, swapchain %ux%u, cell %ux%u",
+        renderer->requested_width, renderer->requested_height,
+        renderer->extent.width, renderer->extent.height,
+        renderer->fonts.cell_width, renderer->fonts.cell_height);
     return create_staging(
         renderer,
         static_cast<size_t>(renderer->extent.width) *
@@ -2009,13 +2051,35 @@ bool initialize_vulkan(TermuxVulkanRenderer *renderer, std::string *error) {
 
 TermuxRendererDrawResult upload_frame(TermuxVulkanRenderer *renderer,
                                       std::string *error) {
+    // The composed frame must match the swapchain extent in both dimensions;
+    // a rotated surface keeps the same byte size but a different layout.
+    // create_swapchain cleared frame_initialized, so the next draw recomposes
+    // while frame_pending_upload keeps the upload pending.
+    auto frame_matches_extent = [renderer]() {
+        return renderer->frame_width == renderer->extent.width &&
+            renderer->frame_height == renderer->extent.height;
+    };
+    if (!frame_matches_extent()) {
+        renderer->frame_initialized = false;
+        return TermuxRendererDrawResult::deferred;
+    }
     uint32_t image_index = 0;
     VkResult result = vkAcquireNextImageKHR(
         renderer->device, renderer->swapchain, UINT64_MAX,
         renderer->acquired, VK_NULL_HANDLE, &image_index);
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        // No image was acquired, so the semaphore is still unsignaled and it
+        // is safe to return before acquiring from the new swapchain.
         if (!create_swapchain(renderer, error))
             return TermuxRendererDrawResult::failure;
+        if (!frame_matches_extent()) {
+            __android_log_print(
+                ANDROID_LOG_DEBUG, LOG_TAG,
+                "Deferring frame after swapchain resize: %ux%u -> %ux%u",
+                renderer->frame_width, renderer->frame_height,
+                renderer->extent.width, renderer->extent.height);
+            return TermuxRendererDrawResult::deferred;
+        }
         result = vkAcquireNextImageKHR(
             renderer->device, renderer->swapchain, UINT64_MAX,
             renderer->acquired, VK_NULL_HANDLE, &image_index);
@@ -2151,17 +2215,34 @@ bool termux_renderer_resize(TermuxVulkanRenderer *renderer, uint32_t width,
                             uint32_t height, uint32_t text_size,
                             const std::vector<std::string> &font_paths,
                             std::string *error) {
-    renderer->requested_width = width;
-    renderer->requested_height = height;
-    vkDeviceWaitIdle(renderer->device);
-    if (text_size != renderer->fonts.text_size ||
-        font_paths != renderer->fonts.custom_paths) {
-        if (!initialize_fonts(&renderer->fonts, text_size, font_paths, error))
+    // initialize_fonts clamps the stored size, so compare the clamped value.
+    const bool fonts_changed =
+        std::max<uint32_t>(8, text_size) != renderer->fonts.text_size ||
+        font_paths != renderer->fonts.custom_paths;
+    // Initial attachment can see the surface's previous extent. Android may
+    // scale that swapchain into the new SurfaceView without reporting
+    // OUT_OF_DATE, so a later callback must retry even for the same request.
+    const bool size_changed = renderer->swapchain_resize_failed ||
+        width != renderer->requested_width ||
+        height != renderer->requested_height ||
+        width != renderer->extent.width ||
+        height != renderer->extent.height;
+    if (fonts_changed) {
+        // Fonts only feed CPU-side composition, so no GPU sync is needed.
+        if (!initialize_fonts(&renderer->fonts, text_size, font_paths,
+                              error)) {
+            renderer->fonts.text_size = 0;  // Retry on the next resize.
             return false;
+        }
         renderer->glyphs.clear();
         renderer->frame_initialized = false;
     }
-    return create_swapchain(renderer, error);
+    if (!size_changed) return true;
+    renderer->requested_width = width;
+    renderer->requested_height = height;
+    vkDeviceWaitIdle(renderer->device);
+    renderer->swapchain_resize_failed = !create_swapchain(renderer, error);
+    return !renderer->swapchain_resize_failed;
 }
 
 TermuxRendererDrawResult termux_renderer_draw(

@@ -683,18 +683,21 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
 
     /** Perform a scroll, either from dragging the screen or by scrolling a mouse wheel. */
     void doScroll(MotionEvent event, int rowsDown) {
+        if (rowsDown == 0) return;
         boolean up = rowsDown < 0;
         int amount = Math.abs(rowsDown);
-        for (int i = 0; i < amount; i++) {
-            if (mTerminal.isMouseTrackingActive()) {
+        if (mTerminal.isMouseTrackingActive()) {
+            for (int i = 0; i < amount; i++) {
                 sendMouseEvent(event, GhosttyTerminal.MOUSE_ACTION_PRESS,
                     up ? GhosttyTerminal.MOUSE_BUTTON_FOUR
                         : GhosttyTerminal.MOUSE_BUTTON_FIVE);
-            } else if (mTerminal.isAlternateBufferActive()) {
-                handleKeyCode(up ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN, 0);
-            } else {
-                scrollViewport(up ? -1 : 1);
             }
+        } else if (mTerminal.isAlternateBufferActive()) {
+            for (int i = 0; i < amount; i++) {
+                handleKeyCode(up ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN, 0);
+            }
+        } else {
+            scrollViewport(rowsDown);
         }
         awakenScrollBars();
         requestRender();
@@ -1345,7 +1348,8 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
                             terminal.resizeSurfaceWithFonts(width, height,
                                 textSize, fontPaths);
                         }
-                        terminal.render(mCursorVisible);
+                        if (!terminal.render(mCursorVisible))
+                            post(this::requestRender);
                     } catch (RuntimeException e) {
                         post(() -> {
                             mSurfaceAttached = false;

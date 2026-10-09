@@ -59,6 +59,8 @@ public final class TerminalSession extends TerminalOutput {
     private boolean mCloseRequested;
     private boolean mClosed;
     private final ProgramStatusStore mProgramStatuses = new ProgramStatusStore();
+    private boolean mProgramStatusFeedActive;
+    private boolean mProgramStatusChanged;
 
     /** Callback which gets notified when a session finishes or changes title. */
     TerminalSessionClient mClient;
@@ -341,14 +343,14 @@ public final class TerminalSession extends TerminalOutput {
     @Override
     public void onProgramStatusReport(int state, int kind, int progress,
                                       String id, String app, String title, String message) {
-        mProgramStatuses.update(new ProgramStatusStore.Record(
-            state, kind, progress, id, app, title, message));
-        mClient.onProgramStatusChanged(this);
+        if (mProgramStatuses.update(new ProgramStatusStore.Record(
+                state, kind, progress, id, app, title, message)))
+            programStatusChanged();
     }
 
     @Override
     public void onProgramStatusPrompt() {
-        if (mProgramStatuses.endActivity()) mClient.onProgramStatusChanged(this);
+        if (mProgramStatuses.endActivity()) programStatusChanged();
     }
 
     public List<ProgramStatusStore.Record> getProgramStatuses() {
@@ -356,7 +358,25 @@ public final class TerminalSession extends TerminalOutput {
     }
 
     public void dismissFinishedProgramStatuses() {
-        if (mProgramStatuses.dismissFinished()) mClient.onProgramStatusChanged(this);
+        if (mProgramStatuses.dismissFinished()) programStatusChanged();
+    }
+
+    private void programStatusChanged() {
+        if (mProgramStatusFeedActive) mProgramStatusChanged = true;
+        else mClient.onProgramStatusChanged(this);
+    }
+
+    private void feedTerminal(byte[] data, int count) {
+        mProgramStatusFeedActive = true;
+        try {
+            mTerminal.feed(data, 0, count);
+        } finally {
+            mProgramStatusFeedActive = false;
+            if (mProgramStatusChanged) {
+                mProgramStatusChanged = false;
+                mClient.onProgramStatusChanged(this);
+            }
+        }
     }
 
     public synchronized boolean isRunning() {
@@ -513,7 +533,7 @@ public final class TerminalSession extends TerminalOutput {
             }
             int bytesRead = mProcessToTerminalIOQueue.read(mReceiveBuffer, false);
             if (bytesRead > 0) {
-                mTerminal.feed(mReceiveBuffer, 0, bytesRead);
+                feedTerminal(mReceiveBuffer, bytesRead);
                 notifyScreenUpdate();
             }
 
@@ -546,7 +566,7 @@ public final class TerminalSession extends TerminalOutput {
                 exitDescription += " - press Enter]";
 
                 byte[] bytesToWrite = exitDescription.getBytes(StandardCharsets.UTF_8);
-                mTerminal.feed(bytesToWrite, 0, bytesToWrite.length);
+                feedTerminal(bytesToWrite, bytesToWrite.length);
                 notifyScreenUpdate();
 
                 mClient.onSessionFinished(TerminalSession.this);

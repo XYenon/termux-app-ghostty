@@ -32,6 +32,8 @@ import java.util.List;
 public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession> implements AdapterView.OnItemClickListener, AdapterView.OnItemLongClickListener {
 
     final TermuxActivity mActivity;
+    private final String[] mProgramStatusStates;
+    private final String[] mProgramStatusKinds;
 
     final StyleSpan boldSpan = new StyleSpan(Typeface.BOLD);
     final StyleSpan italicSpan = new StyleSpan(Typeface.ITALIC);
@@ -39,6 +41,8 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
     public TermuxSessionsListViewController(TermuxActivity activity, List<TermuxSession> sessionList) {
         super(activity.getApplicationContext(), R.layout.item_terminal_sessions_list, sessionList);
         this.mActivity = activity;
+        mProgramStatusStates = activity.getResources().getStringArray(R.array.program_status_states);
+        mProgramStatusKinds = activity.getResources().getStringArray(R.array.program_status_kinds);
     }
 
     @SuppressLint("SetTextI18n")
@@ -104,15 +108,13 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
     }
 
     private String programStatusText(List<ProgramStatusStore.Record> records) {
-        String[] states = mActivity.getResources().getStringArray(R.array.program_status_states);
-        String[] kinds = mActivity.getResources().getStringArray(R.array.program_status_kinds);
         StringBuilder text = new StringBuilder();
         for (int i = records.size() - 1; i >= 0; i--) {
             ProgramStatusStore.Record record = records.get(i);
             if (text.length() > 0) text.append("\n\n");
-            text.append(states[record.state]);
+            text.append(mProgramStatusStates[record.state]);
             if (record.kind != ProgramStatusStore.KIND_NONE)
-                text.append(" · ").append(kinds[record.kind]);
+                text.append(" · ").append(mProgramStatusKinds[record.kind]);
             if (record.progress >= 0) text.append(" · ").append(record.progress).append('%');
             if (!record.app.isEmpty()) text.append(" · ").append(record.app);
             if (!record.id.isEmpty()) text.append(" · ").append(record.id);
@@ -125,11 +127,13 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
     @Override
     public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
         TerminalSession clickedSession = getItem(position).getTerminalSession();
+        List<ProgramStatusStore.Record> statuses = clickedSession == null
+            ? java.util.Collections.emptyList() : clickedSession.getProgramStatuses();
         if (clickedSession != null && clickedSession == mActivity.getCurrentSession()
-            && !clickedSession.getProgramStatuses().isEmpty()) {
+            && !statuses.isEmpty()) {
             new AlertDialog.Builder(mActivity)
                 .setTitle(mActivity.getString(R.string.program_status_details, position + 1))
-                .setMessage(programStatusText(clickedSession.getProgramStatuses()))
+                .setMessage(programStatusText(statuses))
                 .setPositiveButton(android.R.string.ok, null)
                 .setNeutralButton(R.string.program_status_dismiss_finished,
                     (dialog, which) -> clickedSession.dismissFinishedProgramStatuses())

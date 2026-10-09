@@ -347,33 +347,32 @@ bool byte_array_to_vector(JNIEnv *env, jbyteArray value,
     return !env->ExceptionCheck();
 }
 
-void update_string_field(GhosttyTerminal terminal,
-                         TermuxGhosttyEngine *engine,
-                         GhosttyTerminalData data_type, char *&field) {
-    try {
-        std::string value = terminal_string(terminal, data_type);
-        char *copy = strdup(value.c_str());
-        if (!copy) {
-            engine->callback_allocation_failed = true;
-            return;
-        }
-        free(field);
-        field = copy;
-    } catch (const std::bad_alloc &) {
-        engine->callback_allocation_failed = true;
+// Re-reads a dirty title/pwd value under the engine lock and updates the
+// published cache. Returns true with the previous and new values when it
+// changed. All allocation happens before any state is modified, so a
+// bad_alloc leaves the cache untouched and the value still dirty.
+bool refresh_string_cache(GhosttyTerminal terminal, GhosttyTerminalData data,
+                          bool *dirty, std::string *cache,
+                          std::string *old_value, std::string *new_value) {
+    if (!*dirty) return false;
+    std::string value = terminal_string(terminal, data);
+    if (value == *cache) {
+        *dirty = false;
+        return false;
     }
+    *new_value = value;
+    old_value->swap(*cache);
+    cache->swap(value);
+    *dirty = false;
+    return true;
 }
 
-void title_changed(GhosttyTerminal terminal, void *userdata) {
-    auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
-    update_string_field(terminal, engine, GHOSTTY_TERMINAL_DATA_TITLE,
-                        engine->title);
+void title_changed(GhosttyTerminal, void *userdata) {
+    static_cast<TermuxGhosttyEngine *>(userdata)->title_dirty = true;
 }
 
-void pwd_changed(GhosttyTerminal terminal, void *userdata) {
-    auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
-    update_string_field(terminal, engine, GHOSTTY_TERMINAL_DATA_PWD,
-                        engine->pwd);
+void pwd_changed(GhosttyTerminal, void *userdata) {
+    static_cast<TermuxGhosttyEngine *>(userdata)->pwd_dirty = true;
 }
 
 void program_status(GhosttyTerminal, void *userdata,
@@ -433,12 +432,11 @@ void notify_program_status(JNIEnv *env, TermuxGhosttyEngine *engine,
 
 void terminal_reset(GhosttyTerminal, void *userdata) {
     auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
-    // RIS does not emit title/pwd effects. Clear the cached host state here;
-    // nativeFeed publishes the final values after releasing the engine lock.
-    free(engine->title);
-    engine->title = nullptr;
-    free(engine->pwd);
-    engine->pwd = nullptr;
+    // RIS does not emit title/pwd effects. Mark both dirty so the caller
+    // re-reads the cleared (or subsequently set) values and publishes any
+    // change after releasing the engine lock.
+    engine->title_dirty = true;
+    engine->pwd_dirty = true;
     engine->render_held = false;
     engine->pending_desktop_notification = false;
     engine->pending_notification_title.clear();
@@ -1127,8 +1125,6 @@ void destroy_engine(JNIEnv *env, TermuxGhosttyEngine *engine) {
     ghostty_key_encoder_free(engine->key_encoder);
     ghostty_terminal_free(engine->terminal);
     if (engine->output) env->DeleteGlobalRef(engine->output);
-    free(engine->title);
-    free(engine->pwd);
     pthread_mutex_destroy(&engine->mutex);
     delete engine;
 }
@@ -1309,13 +1305,6 @@ Java_com_termux_terminal_GhosttyTerminal_nativeCreate(
                             static_cast<uint16_t>(rows),
                             static_cast<uint32_t>(cell_width),
                             static_cast<uint32_t>(cell_height));
-    engine->title = strdup("");
-    engine->pwd = strdup("");
-    if (!engine->title || !engine->pwd) {
-        destroy_engine(env, engine);
-        throw_illegal_state(env, "Out of memory creating libghostty terminal");
-        return 0;
-    }
     engine->mouse_shape = GHOSTTY_MOUSE_SHAPE_TEXT;
     return reinterpret_cast<jlong>(engine);
 }
@@ -1358,22 +1347,21 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
     JNIEnv *env, jclass, jlong handle, jbyteArray data, jint offset,
     jint count) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
-    if (!engine || offset < 0 || count < 0 ||
-        offset + count > env->GetArrayLength(data)) {
+    if (!engine || !data || offset < 0 || count < 0 ||
+        offset > env->GetArrayLength(data) ||
+        count > env->GetArrayLength(data) - offset) {
         throw_illegal_argument(env, "Invalid VT input range");
         return;
     }
     try {
-        std::vector<uint8_t> buffer(static_cast<size_t>(count));
-        env->GetByteArrayRegion(data, offset, count,
-                                reinterpret_cast<jbyte *>(buffer.data()));
-        if (env->ExceptionCheck()) return;
         GhosttyColorRgb before{};
         GhosttyColorRgb after{};
         std::string old_title;
         std::string new_title;
         std::string old_pwd;
         std::string new_pwd;
+        bool title_updated;
+        bool pwd_updated;
         int old_mouse_shape;
         int new_mouse_shape;
         bool has_notification;
@@ -1390,8 +1378,13 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
         bool has_after;
         {
             ScopedEngineLock lock(engine);
-            old_title = engine->title ? engine->title : "";
-            old_pwd = engine->pwd ? engine->pwd : "";
+            // Java rejects concurrent feeds, but the reused buffer is still
+            // only accessed under the engine mutex.
+            std::vector<uint8_t> &buffer = engine->feed_buffer;
+            buffer.resize(static_cast<size_t>(count));
+            env->GetByteArrayRegion(data, offset, count,
+                                    reinterpret_cast<jbyte *>(buffer.data()));
+            if (env->ExceptionCheck()) return;
             old_mouse_shape = engine->mouse_shape;
             engine->pending_desktop_notification = false;
             engine->pending_progress_report = false;
@@ -1407,8 +1400,12 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
             engine->pending_program_status = nullptr;
             engine->pending_pty_writes = nullptr;
             has_after = read_background(engine->terminal, &after);
-            new_title = engine->title ? engine->title : "";
-            new_pwd = engine->pwd ? engine->pwd : "";
+            title_updated = refresh_string_cache(
+                engine->terminal, GHOSTTY_TERMINAL_DATA_TITLE,
+                &engine->title_dirty, &engine->title, &old_title, &new_title);
+            pwd_updated = refresh_string_cache(
+                engine->terminal, GHOSTTY_TERMINAL_DATA_PWD,
+                &engine->pwd_dirty, &engine->pwd, &old_pwd, &new_pwd);
             GhosttyMouseShape mouse_shape =
                 GHOSTTY_MOUSE_SHAPE_TEXT;
             ghostty_terminal_get(engine->terminal,
@@ -1417,8 +1414,11 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
             new_mouse_shape = static_cast<int>(mouse_shape);
             engine->mouse_shape = new_mouse_shape;
             has_notification = engine->pending_desktop_notification;
-            notification_title = engine->pending_notification_title;
-            notification_body = engine->pending_notification_body;
+            if (has_notification) {
+                notification_title.swap(engine->pending_notification_title);
+                notification_body.swap(engine->pending_notification_body);
+                engine->pending_desktop_notification = false;
+            }
             has_progress = engine->pending_progress_report;
             progress_state = engine->pending_progress_state;
             progress_value = engine->pending_progress_value;
@@ -1432,10 +1432,10 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
             termux_ghostty_engine_write(engine, pty_replies.data(),
                                         pty_replies.size());
         }
-        if (old_title != new_title) {
+        if (title_updated) {
             notify_title_changed(engine, old_title, new_title);
         }
-        if (old_pwd != new_pwd) {
+        if (pwd_updated) {
             notify_string_changed(engine, engine->pwd_method, new_pwd,
                                   "working directory callback");
         }
@@ -1489,26 +1489,33 @@ Java_com_termux_terminal_GhosttyTerminal_nativeReset(
         std::string old_title;
         std::string new_title;
         std::string old_pwd;
+        std::string new_pwd;
+        bool title_updated;
+        bool pwd_updated;
         int old_mouse_shape;
         bool had_before;
         bool has_after;
         {
             ScopedEngineLock lock(engine);
-            old_title = engine->title ? engine->title : "";
-            old_pwd = engine->pwd ? engine->pwd : "";
             had_before = read_background(engine->terminal, &before);
             ghostty_terminal_reset(engine->terminal);
             terminal_reset(engine->terminal, engine);
             has_after = read_background(engine->terminal, &after);
-            new_title = engine->title ? engine->title : "";
             old_mouse_shape = engine->mouse_shape;
             engine->mouse_shape = GHOSTTY_MOUSE_SHAPE_TEXT;
+            // The reset cleared title and pwd; publish only real changes.
+            title_updated = refresh_string_cache(
+                engine->terminal, GHOSTTY_TERMINAL_DATA_TITLE,
+                &engine->title_dirty, &engine->title, &old_title, &new_title);
+            pwd_updated = refresh_string_cache(
+                engine->terminal, GHOSTTY_TERMINAL_DATA_PWD,
+                &engine->pwd_dirty, &engine->pwd, &old_pwd, &new_pwd);
         }
-        if (old_title != new_title) {
+        if (title_updated) {
             notify_title_changed(engine, old_title, new_title);
         }
-        if (!old_pwd.empty()) {
-            notify_string_changed(engine, engine->pwd_method, "",
+        if (pwd_updated) {
+            notify_string_changed(engine, engine->pwd_method, new_pwd,
                                   "working directory reset callback");
         }
         if (old_mouse_shape != GHOSTTY_MOUSE_SHAPE_TEXT) {

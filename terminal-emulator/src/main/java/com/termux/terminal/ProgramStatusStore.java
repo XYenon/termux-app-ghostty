@@ -38,35 +38,50 @@ public final class ProgramStatusStore {
     }
 
     private final LinkedHashMap<String, Record> records = new LinkedHashMap<>();
+    private List<Record> snapshot = Collections.emptyList();
 
-    public void update(Record report) {
+    public boolean update(Record report) {
         if (report.state == CLEAR) {
-            if (report.id.isEmpty()) records.clear();
-            else records.keySet().removeIf(id -> id.equals(report.id) ||
-                id.startsWith(report.id + "/"));
-            return;
+            boolean changed;
+            if (report.id.isEmpty()) {
+                changed = !records.isEmpty();
+                records.clear();
+            } else {
+                changed = records.keySet().removeIf(id -> id.equals(report.id) ||
+                    id.startsWith(report.id + "/"));
+            }
+            if (changed) snapshot = null;
+            return changed;
         }
         // Reinsert to track update order, rather than access or creation order.
         records.remove(report.id);
         records.put(report.id, report);
         if (records.size() > MAX_RECORDS)
             records.remove(records.keySet().iterator().next());
+        snapshot = null;
+        return true;
     }
 
     /** A fresh shell prompt or process exit ends transient program activity. */
     public boolean endActivity() {
-        return records.values().removeIf(record -> record.state == IDLE ||
+        boolean changed = records.values().removeIf(record -> record.state == IDLE ||
             record.state == WORKING || record.state == BLOCKED);
+        if (changed) snapshot = null;
+        return changed;
     }
 
     /** Acknowledge results only when the user explicitly dismisses them. */
     public boolean dismissFinished() {
-        return records.values().removeIf(record -> record.state == DONE ||
+        boolean changed = records.values().removeIf(record -> record.state == DONE ||
             record.state == ERROR);
+        if (changed) snapshot = null;
+        return changed;
     }
 
     /** Oldest update first; callers cannot mutate the stored records. */
     public List<Record> snapshot() {
-        return Collections.unmodifiableList(new ArrayList<>(records.values()));
+        if (snapshot == null)
+            snapshot = Collections.unmodifiableList(new ArrayList<>(records.values()));
+        return snapshot;
     }
 }
