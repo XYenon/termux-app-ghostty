@@ -134,7 +134,9 @@ public final class GhosttyTerminal implements AutoCloseable {
     public synchronized long getNativeHandle() {
         if (mClipboardPromptActive || mClosing)
             throw new IllegalStateException("libghostty terminal is not available");
-        return requireHandle();
+        if (mNativeHandle == 0)
+            throw new IllegalStateException("libghostty terminal is closed");
+        return mNativeHandle;
     }
 
     public void feed(byte[] data, int offset, int count) {
@@ -549,13 +551,6 @@ public final class GhosttyTerminal implements AutoCloseable {
         } finally {
             super.finalize();
         }
-    }
-
-    private long requireHandle() {
-        if (mNativeHandle == 0) {
-            throw new IllegalStateException("libghostty terminal is closed");
-        }
-        return mNativeHandle;
     }
 
     private synchronized long getHandleIfOpen() {

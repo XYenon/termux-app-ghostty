@@ -214,15 +214,14 @@ public class TextSelectionCursorController implements CursorController {
             int selectionRowShift = terminalView.scrollSelectionViewport(scroll);
             mSelY1 += selectionRowShift;
             mSelY2 += selectionRowShift;
-            row = Math.max(0, Math.min(row, rows - 1));
         }
+        row = Math.max(0, Math.min(row, rows - 1));
 
         if (handle == mStartHandle) {
             mSelX1 = terminalView.getCursorX(x);
             mSelY1 = row;
             mSelX1 = Math.max(0, Math.min(mSelX1,
                 terminalView.getTerminalColumns() - 1));
-            mSelY1 = Math.max(0, Math.min(mSelY1, rows - 1));
 
             if (mSelY1 > mSelY2) {
                 mSelY1 = mSelY2;
@@ -236,7 +235,6 @@ public class TextSelectionCursorController implements CursorController {
             mSelY2 = row;
             mSelX2 = Math.max(0, Math.min(mSelX2,
                 terminalView.getTerminalColumns() - 1));
-            mSelY2 = Math.max(0, Math.min(mSelY2, rows - 1));
 
             if (mSelY1 > mSelY2) {
                 mSelY2 = mSelY1;
@@ -252,7 +250,8 @@ public class TextSelectionCursorController implements CursorController {
 
     static int getViewportScrollForRow(int row, int rows) {
         if (rows <= 0) return 0;
-        return row < 0 ? -1 : row >= rows ? 1 : 0;
+        if (row < 0) return -1;
+        return row >= rows ? 1 : 0;
     }
 
     public void shiftSelectionRows(int rowShift) {

@@ -261,17 +261,16 @@ bool set_face_size(FT_Face face, uint32_t text_size) {
 bool initialize_face(Face *face, const std::string &path, FT_Long face_index,
                      uint32_t text_size) {
     if (!set_face_size(face->ft, text_size)) return false;
+    const int scale = static_cast<int>(text_size * 64);
     face->hb = hb_ft_font_create_referenced(face->ft);
     if (!face->hb) return false;
-    hb_font_set_scale(face->hb, static_cast<int>(text_size * 64),
-                      static_cast<int>(text_size * 64));
+    hb_font_set_scale(face->hb, scale, scale);
     face->paint_face = hb_face_create_from_file_or_fail(
         path.c_str(), static_cast<unsigned int>(face_index));
     if (!face->paint_face) return false;
     face->paint_font = hb_font_create(face->paint_face);
     if (!face->paint_font) return false;
-    hb_font_set_scale(face->paint_font, static_cast<int>(text_size * 64),
-                      static_cast<int>(text_size * 64));
+    hb_font_set_scale(face->paint_font, scale, scale);
     face->has_color = hb_ot_color_has_paint(face->paint_face) ||
         hb_ot_color_has_layers(face->paint_face) ||
         hb_ot_color_has_png(face->paint_face);
@@ -291,11 +290,8 @@ bool render_color_glyph(Face *face, hb_codepoint_t glyph_index,
     hb_glyph_extents_t glyph_extents{};
     if (!hb_font_get_glyph_extents(
             face->paint_font, glyph_index, &glyph_extents) ||
-        !hb_raster_paint_set_glyph_extents(face->raster, &glyph_extents)) {
-        hb_raster_paint_clear(face->raster);
-        return false;
-    }
-    if (!hb_raster_paint_glyph_or_fail(
+        !hb_raster_paint_set_glyph_extents(face->raster, &glyph_extents) ||
+        !hb_raster_paint_glyph_or_fail(
             face->raster, face->paint_font, glyph_index)) {
         hb_raster_paint_clear(face->raster);
         return false;
@@ -657,13 +653,11 @@ Face *face_for_text(FontSystem *fonts, const uint8_t *bytes, size_t length,
     }
 
     auto face = std::make_unique<Face>();
-    if (FT_New_Face(fonts->library, path.c_str(),
-                    static_cast<FT_Long>(index), &face->ft) != 0) {
-        AFont_close(font);
-        return fonts->primary_face;
-    }
+    bool opened = FT_New_Face(fonts->library, path.c_str(),
+                              static_cast<FT_Long>(index), &face->ft) == 0;
     AFont_close(font);
-    if (!initialize_face(face.get(), path, static_cast<FT_Long>(index),
+    if (!opened ||
+        !initialize_face(face.get(), path, static_cast<FT_Long>(index),
                          fonts->text_size))
         return fonts->primary_face;
     Face *result = face.get();
@@ -686,16 +680,18 @@ void put_pixel(std::vector<uint8_t> *frame, uint32_t width, uint32_t height,
     (*frame)[index + 3] = 255;
 }
 
-void fill_rect(std::vector<uint8_t> *frame, uint32_t width, uint32_t height,
-               int left, int top, int right, int bottom,
-               GhosttyColorRgb color) {
+void fill_frame_rect(TermuxVulkanRenderer *renderer, int left, int top,
+                     int right, int bottom, GhosttyColorRgb color) {
+    const uint32_t width = renderer->extent.width;
+    const uint32_t height = renderer->extent.height;
+    std::vector<uint8_t> &frame = renderer->frame;
     left = std::max(0, left);
     top = std::max(0, top);
     right = std::min(static_cast<int>(width), right);
     bottom = std::min(static_cast<int>(height), bottom);
     if (left >= right || top >= bottom) return;
 
-    uint8_t *first_row = frame->data() +
+    uint8_t *first_row = frame.data() +
         (static_cast<size_t>(top) * width + left) * 4;
     uint8_t *pixel = first_row;
     for (int x = left; x < right; ++x, pixel += 4) {
@@ -706,7 +702,7 @@ void fill_rect(std::vector<uint8_t> *frame, uint32_t width, uint32_t height,
     }
     size_t row_bytes = static_cast<size_t>(right - left) * 4;
     for (int y = top + 1; y < bottom; ++y) {
-        uint8_t *row = frame->data() +
+        uint8_t *row = frame.data() +
             (static_cast<size_t>(y) * width + left) * 4;
         memcpy(row, first_row, row_bytes);
     }
@@ -730,37 +726,29 @@ CachedTextRun load_text_run(FontSystem *fonts, const uint8_t *bytes,
     int pen_y = fonts->ascender;
     for (unsigned int i = 0; i < count; ++i) {
         CachedTextGlyph glyph;
-        if (render_color_glyph(face, infos[i].codepoint, &glyph)) {
-            fit_colored_glyph(&glyph, fonts->cell_width * cell_columns,
-                              fonts->cell_height);
-            glyph.x += pen_x + positions[i].x_offset / 64;
-            glyph.y += pen_y - positions[i].y_offset / 64;
-            result.glyphs.emplace_back(std::move(glyph));
-            pen_x += positions[i].x_advance / 64;
-            pen_y -= positions[i].y_advance / 64;
-            continue;
-        }
-        if (FT_Load_Glyph(face->ft, infos[i].codepoint,
-                          FT_LOAD_DEFAULT | FT_LOAD_COLOR) != 0) continue;
-        if (FT_Render_Glyph(face->ft->glyph, FT_RENDER_MODE_NORMAL) != 0)
-            continue;
-        glyph.x = face->ft->glyph->bitmap_left;
-        glyph.y = -face->ft->glyph->bitmap_top;
-        const FT_Bitmap &bitmap = face->ft->glyph->bitmap;
-        glyph.width = bitmap.width;
-        glyph.height = bitmap.rows;
-        glyph.colored = bitmap.pixel_mode == FT_PIXEL_MODE_BGRA;
-        glyph.premultiplied = glyph.colored;
-        size_t bytes_per_pixel = glyph.colored ? 4 : 1;
-        glyph.pixels.resize(
-            static_cast<size_t>(glyph.width) * glyph.height *
-            bytes_per_pixel);
-        for (uint32_t row = 0; row < glyph.height; ++row) {
-            const uint8_t *source =
-                bitmap.buffer + row * std::abs(bitmap.pitch);
-            uint8_t *destination = glyph.pixels.data() +
-                static_cast<size_t>(row) * glyph.width * bytes_per_pixel;
-            memcpy(destination, source, glyph.width * bytes_per_pixel);
+        if (!render_color_glyph(face, infos[i].codepoint, &glyph)) {
+            if (FT_Load_Glyph(face->ft, infos[i].codepoint,
+                              FT_LOAD_DEFAULT | FT_LOAD_COLOR) != 0) continue;
+            if (FT_Render_Glyph(face->ft->glyph, FT_RENDER_MODE_NORMAL) != 0)
+                continue;
+            glyph.x = face->ft->glyph->bitmap_left;
+            glyph.y = -face->ft->glyph->bitmap_top;
+            const FT_Bitmap &bitmap = face->ft->glyph->bitmap;
+            glyph.width = bitmap.width;
+            glyph.height = bitmap.rows;
+            glyph.colored = bitmap.pixel_mode == FT_PIXEL_MODE_BGRA;
+            glyph.premultiplied = glyph.colored;
+            size_t bytes_per_pixel = glyph.colored ? 4 : 1;
+            glyph.pixels.resize(
+                static_cast<size_t>(glyph.width) * glyph.height *
+                bytes_per_pixel);
+            for (uint32_t row = 0; row < glyph.height; ++row) {
+                const uint8_t *source =
+                    bitmap.buffer + row * std::abs(bitmap.pitch);
+                uint8_t *destination = glyph.pixels.data() +
+                    static_cast<size_t>(row) * glyph.width * bytes_per_pixel;
+                memcpy(destination, source, glyph.width * bytes_per_pixel);
+            }
         }
         fit_colored_glyph(&glyph, fonts->cell_width * cell_columns,
                           fonts->cell_height);
@@ -1168,18 +1156,14 @@ void draw_cell_content(TermuxVulkanRenderer *renderer, const RenderCell &cell,
         }
     }
     if (cell.style.underline != 0) {
-        fill_rect(&renderer->frame, renderer->extent.width,
-                  renderer->extent.height, left, bottom - 2, right,
-                  bottom - 1, color);
+        fill_frame_rect(renderer, left, bottom - 2, right, bottom - 1, color);
     }
     if (cell.style.strikethrough) {
         int y = top + renderer->fonts.cell_height / 2;
-        fill_rect(&renderer->frame, renderer->extent.width,
-                  renderer->extent.height, left, y, right, y + 1, color);
+        fill_frame_rect(renderer, left, y, right, y + 1, color);
     }
     if (cell.style.overline) {
-        fill_rect(&renderer->frame, renderer->extent.width,
-                  renderer->extent.height, left, top, right, top + 1, color);
+        fill_frame_rect(renderer, left, top, right, top + 1, color);
     }
 }
 
@@ -1227,10 +1211,13 @@ void draw_kitty_image(TermuxVulkanRenderer *renderer,
         image, GHOSTTY_KITTY_IMAGE_DATA_FORMAT, &format);
     if (!pixels || length == 0) return;
 
-    uint32_t bytes_per_pixel =
-        format == GHOSTTY_KITTY_IMAGE_FORMAT_RGB ? 3 :
-        format == GHOSTTY_KITTY_IMAGE_FORMAT_RGBA ? 4 :
-        format == GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA ? 2 : 1;
+    uint32_t bytes_per_pixel = 1;
+    switch (format) {
+        case GHOSTTY_KITTY_IMAGE_FORMAT_RGB: bytes_per_pixel = 3; break;
+        case GHOSTTY_KITTY_IMAGE_FORMAT_RGBA: bytes_per_pixel = 4; break;
+        case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA: bytes_per_pixel = 2; break;
+        default: break;
+    }
     const int64_t draw_left = std::max<int64_t>(0, destination_x);
     const int64_t draw_top = std::max<int64_t>(0, destination_y);
     const int64_t draw_right = std::min<int64_t>(
@@ -1562,22 +1549,18 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
     bool full_redraw = !renderer->frame_initialized || dimensions_changed ||
         glyphs_changed || kitty_changed || kitty_graphics ||
         dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL;
-    colors.size = sizeof(colors);
     ghostty_render_state_get(engine->render_state,
                              GHOSTTY_RENDER_STATE_DATA_COLORS, &colors);
 
     renderer->frame.resize(frame_size);
     if (full_redraw) {
-        fill_rect(&renderer->frame, renderer->extent.width,
-                  renderer->extent.height, 0, 0, renderer->extent.width,
-                  renderer->extent.height, colors.background);
+        fill_frame_rect(renderer, 0, 0, renderer->extent.width,
+                        renderer->extent.height, colors.background);
         if (kitty_graphics)
             draw_kitty_layer(renderer,
                              GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
-        fill_rect(&renderer->frame, renderer->extent.width,
-                  renderer->extent.height, 0, 0,
-                  cols * renderer->fonts.cell_width,
-                  rows * renderer->fonts.cell_height, colors.background);
+        fill_frame_rect(renderer, 0, 0, cols * renderer->fonts.cell_width,
+                        rows * renderer->fonts.cell_height, colors.background);
     }
 
     if (ghostty_render_state_get(
@@ -1608,12 +1591,11 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
             continue;
         }
         if (!full_redraw) {
-            fill_rect(&renderer->frame, renderer->extent.width,
-                      renderer->extent.height, 0,
-                      row_index * renderer->fonts.cell_height,
-                      cols * renderer->fonts.cell_width,
-                      (row_index + 1) * renderer->fonts.cell_height,
-                      colors.background);
+            fill_frame_rect(renderer, 0,
+                            row_index * renderer->fonts.cell_height,
+                            cols * renderer->fonts.cell_width,
+                            (row_index + 1) * renderer->fonts.cell_height,
+                            colors.background);
         }
         if (ghostty_render_state_row_get(
                 engine->row_iterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
@@ -1657,13 +1639,12 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
             if (background.r != colors.background.r ||
                 background.g != colors.background.g ||
                 background.b != colors.background.b) {
-                fill_rect(&renderer->frame, renderer->extent.width,
-                          renderer->extent.height,
-                          column * renderer->fonts.cell_width,
-                          row_index * renderer->fonts.cell_height,
-                          (column + 1) * renderer->fonts.cell_width,
-                          (row_index + 1) * renderer->fonts.cell_height,
-                          background);
+                fill_frame_rect(renderer,
+                                column * renderer->fonts.cell_width,
+                                row_index * renderer->fonts.cell_height,
+                                (column + 1) * renderer->fonts.cell_width,
+                                (row_index + 1) * renderer->fonts.cell_height,
+                                background);
             }
 
             RenderCell cell{};
@@ -1737,18 +1718,14 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
                 top = bottom - std::max(1u, renderer->fonts.cell_height / 6);
                 break;
             case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW:
-                fill_rect(&renderer->frame, renderer->extent.width,
-                          renderer->extent.height, left, top, right, top + 1,
-                          cursor_color);
-                fill_rect(&renderer->frame, renderer->extent.width,
-                          renderer->extent.height, left, bottom - 1, right,
-                          bottom, cursor_color);
-                fill_rect(&renderer->frame, renderer->extent.width,
-                          renderer->extent.height, left, top, left + 1, bottom,
-                          cursor_color);
-                fill_rect(&renderer->frame, renderer->extent.width,
-                          renderer->extent.height, right - 1, top, right,
-                          bottom, cursor_color);
+                fill_frame_rect(renderer, left, top, right, top + 1,
+                                cursor_color);
+                fill_frame_rect(renderer, left, bottom - 1, right, bottom,
+                                cursor_color);
+                fill_frame_rect(renderer, left, top, left + 1, bottom,
+                                cursor_color);
+                fill_frame_rect(renderer, right - 1, top, right, bottom,
+                                cursor_color);
                 hollow = true;
                 break;
             case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK:
@@ -1758,9 +1735,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
                 break;
         }
         if (!hollow) {
-            fill_rect(&renderer->frame, renderer->extent.width,
-                      renderer->extent.height, left, top, right, bottom,
-                      cursor_color);
+            fill_frame_rect(renderer, left, top, right, bottom, cursor_color);
         }
         if (solid_block && cursor_cell) {
             draw_cell_content(renderer, *cursor_cell, glyphs_available,
@@ -1775,14 +1750,18 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
     return true;
 }
 
-bool create_staging(TermuxVulkanRenderer *renderer, size_t size,
-                    std::string *error) {
-    if (renderer->staging_size >= size) return true;
+void destroy_staging(TermuxVulkanRenderer *renderer) {
     if (renderer->staging) vkDestroyBuffer(renderer->device,
                                            renderer->staging, nullptr);
     if (renderer->staging_memory) vkFreeMemory(renderer->device,
                                                renderer->staging_memory,
                                                nullptr);
+}
+
+bool create_staging(TermuxVulkanRenderer *renderer, size_t size,
+                    std::string *error) {
+    if (renderer->staging_size >= size) return true;
+    destroy_staging(renderer);
     renderer->staging = VK_NULL_HANDLE;
     renderer->staging_memory = VK_NULL_HANDLE;
     renderer->staging_size = 0;
@@ -2134,10 +2113,8 @@ TermuxRendererDrawResult upload_frame(TermuxVulkanRenderer *renderer,
     present.pImageIndices = &image_index;
     result = vkQueuePresentKHR(renderer->queue, &present);
     renderer->image_initialized[image_index] = true;
-    if (result == VK_ERROR_OUT_OF_DATE_KHR ||
-        result == VK_SUBOPTIMAL_KHR)
-        return TermuxRendererDrawResult::success;
-    if (result != VK_SUCCESS) {
+    if (result != VK_SUCCESS && result != VK_ERROR_OUT_OF_DATE_KHR &&
+        result != VK_SUBOPTIMAL_KHR) {
         *error = vk_error("vkQueuePresentKHR", result);
         return TermuxRendererDrawResult::failure;
     }
@@ -2237,11 +2214,7 @@ TermuxRendererDrawResult termux_renderer_draw(
 void termux_renderer_destroy(TermuxVulkanRenderer *renderer) {
     if (!renderer) return;
     if (renderer->device) vkDeviceWaitIdle(renderer->device);
-    if (renderer->staging) vkDestroyBuffer(renderer->device,
-                                           renderer->staging, nullptr);
-    if (renderer->staging_memory) vkFreeMemory(renderer->device,
-                                               renderer->staging_memory,
-                                               nullptr);
+    destroy_staging(renderer);
     if (renderer->fence) vkDestroyFence(renderer->device, renderer->fence,
                                         nullptr);
     if (renderer->acquired) vkDestroySemaphore(renderer->device,

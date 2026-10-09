@@ -25,16 +25,16 @@ final class ScrollbackCompressionQueue<T> {
     /** Process one bounded batch and retain only terminals reporting pending work. */
     void processBatch(int terminalLimit, int stepsPerTerminal,
                       ToIntFunction<T> compress) {
-        List<Target<T>> batch = takeBatch(terminalLimit);
-        List<Target<T>> pending = new ArrayList<>();
-        for (Target<T> target : batch) {
-            for (int step = 0; step < Math.max(0, stepsPerTerminal); step++) {
-                int result = compress.applyAsInt(target.terminal);
-                if (result != RESULT_PENDING) break;
-                if (step == stepsPerTerminal - 1) pending.add(target);
+        int count = Math.min(Math.max(0, terminalLimit), queued.size());
+        List<Target<T>> batch = new ArrayList<>(queued.subList(0, count));
+        queued.subList(0, count).clear();
+        batch.removeIf(target -> {
+            for (int step = 0; step < stepsPerTerminal; step++) {
+                if (compress.applyAsInt(target.terminal) != RESULT_PENDING) return true;
             }
-        }
-        queued.addAll(pending);
+            return stepsPerTerminal <= 0;
+        });
+        queued.addAll(batch);
     }
 
     boolean hasWork() {
@@ -43,13 +43,6 @@ final class ScrollbackCompressionQueue<T> {
 
     int size() {
         return queued.size();
-    }
-
-    private List<Target<T>> takeBatch(int limit) {
-        int count = Math.min(Math.max(0, limit), queued.size());
-        List<Target<T>> batch = new ArrayList<>(queued.subList(0, count));
-        queued.subList(0, count).clear();
-        return batch;
     }
 
     static final class Target<T> {

@@ -1,6 +1,5 @@
 package com.termux.shared.termux.shell.command.environment;
 
-import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
@@ -146,8 +145,9 @@ public class TermuxAppShellEnvironment {
 
             ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__DATA_DIR, applicationInfo.dataDir);
             // This environment variable intentionally exposes Termux's legacy path contract.
+            //noinspection SdCardPath
             ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__LEGACY_DATA_DIR,
-                getLegacyDataDir(applicationInfo.packageName));
+                "/data/data/" + applicationInfo.packageName);
 
             ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX__SE_PROCESS_CONTEXT, SELinuxUtils.getContext());
             ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__SE_FILE_CONTEXT, SELinuxUtils.getFileContext(applicationInfo.dataDir));
@@ -172,11 +172,6 @@ public class TermuxAppShellEnvironment {
             ShellEnvironmentUtils.putToEnvIfSet(environment, ENV_TERMUX_APP__APK_RELEASE,
                 TermuxUtils.getAPKRelease(signingCertificateSHA256Digest).replaceAll("[^a-zA-Z]", "_").toUpperCase(Locale.ROOT));
         }
-    }
-
-    @SuppressLint("SdCardPath")
-    private static String getLegacyDataDir(@NonNull String packageName) {
-        return "/data/data/" + packageName;
     }
 
     /** Update {@link #ENV_TERMUX_APP__AM_SOCKET_SERVER_ENABLED} value in {@code environment}. */

@@ -47,6 +47,14 @@ class ScopedEngineLock {
     bool locked_ = true;
 };
 
+template <typename T>
+T terminal_data(jlong handle, GhosttyTerminalData data, T value = {}) {
+    auto *engine = termux_ghostty_engine_from_handle(handle);
+    ScopedEngineLock lock(engine);
+    ghostty_terminal_get(engine->terminal, data, &value);
+    return value;
+}
+
 JNIEnv *get_env(TermuxGhosttyEngine *engine, bool *attached) {
     *attached = false;
     JNIEnv *env = nullptr;
@@ -64,6 +72,20 @@ void release_env(TermuxGhosttyEngine *engine, bool attached) {
 }
 
 void throw_illegal_state(JNIEnv *env, const char *message);
+void clear_java_exception(JNIEnv *env, const char *operation);
+
+// Runs callback with a JNIEnv for the current thread, then logs and clears
+// any pending Java exception and detaches the thread if it was attached here.
+template <typename Callback>
+void with_java_env(TermuxGhosttyEngine *engine, const char *operation,
+                   Callback callback) {
+    bool attached;
+    JNIEnv *env = get_env(engine, &attached);
+    if (!env) return;
+    callback(env);
+    clear_java_exception(env, operation);
+    release_env(engine, attached);
+}
 
 bool string_array(JNIEnv *env, jobjectArray values,
                   std::vector<std::string> *result) {
@@ -137,28 +159,25 @@ void write_pty(GhosttyTerminal, void *userdata, const uint8_t *data,
         }
         return;
     }
-    bool attached;
-    JNIEnv *env = get_env(engine, &attached);
-    if (!env) return;
-    constexpr size_t kChunkSize = 1024 * 1024;
-    size_t offset = 0;
-    while (offset < length && !env->ExceptionCheck()) {
-        const jsize chunk = static_cast<jsize>(
-            std::min(kChunkSize, length - offset));
-        jbyteArray bytes = env->NewByteArray(chunk);
-        if (!bytes) break;
-        env->SetByteArrayRegion(
-            bytes, 0, chunk,
-            reinterpret_cast<const jbyte *>(data + offset));
-        if (!env->ExceptionCheck()) {
-            env->CallVoidMethod(
-                engine->output, engine->write_method, bytes, 0, chunk);
+    with_java_env(engine, "PTY response", [&](JNIEnv *env) {
+        constexpr size_t kChunkSize = 1024 * 1024;
+        size_t offset = 0;
+        while (offset < length && !env->ExceptionCheck()) {
+            const jsize chunk = static_cast<jsize>(
+                std::min(kChunkSize, length - offset));
+            jbyteArray bytes = env->NewByteArray(chunk);
+            if (!bytes) break;
+            env->SetByteArrayRegion(
+                bytes, 0, chunk,
+                reinterpret_cast<const jbyte *>(data + offset));
+            if (!env->ExceptionCheck()) {
+                env->CallVoidMethod(
+                    engine->output, engine->write_method, bytes, 0, chunk);
+            }
+            env->DeleteLocalRef(bytes);
+            offset += static_cast<size_t>(chunk);
         }
-        env->DeleteLocalRef(bytes);
-        offset += static_cast<size_t>(chunk);
-    }
-    clear_java_exception(env, "PTY response");
-    release_env(engine, attached);
+    });
 }
 
 void render_hold(GhosttyTerminal terminal, void *userdata, bool held) {
@@ -220,21 +239,22 @@ bool color_scheme(GhosttyTerminal terminal, void *,
 
 void bell(GhosttyTerminal, void *userdata) {
     auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
-    bool attached;
-    JNIEnv *env = get_env(engine, &attached);
-    if (!env) return;
-    env->CallVoidMethod(engine->output, engine->bell_method);
-    clear_java_exception(env, "bell callback");
-    release_env(engine, attached);
+    with_java_env(engine, "bell callback", [&](JNIEnv *env) {
+        env->CallVoidMethod(engine->output, engine->bell_method);
+    });
+}
+
+std::string ghostty_string(const GhosttyString &value) {
+    if (!value.ptr || value.len == 0) return {};
+    return {reinterpret_cast<const char *>(value.ptr), value.len};
 }
 
 std::string terminal_string(GhosttyTerminal terminal, GhosttyTerminalData data) {
     GhosttyString value{};
-    if (ghostty_terminal_get(terminal, data, &value) != GHOSTTY_SUCCESS ||
-        !value.ptr || value.len == 0) {
+    if (ghostty_terminal_get(terminal, data, &value) != GHOSTTY_SUCCESS) {
         return {};
     }
-    return {reinterpret_cast<const char *>(value.ptr), value.len};
+    return ghostty_string(value);
 }
 
 jstring new_java_string_from_utf8(JNIEnv *env, const std::string &value) {
@@ -306,6 +326,11 @@ jstring new_java_string_from_utf8(JNIEnv *env, const std::string &value) {
     return env->NewString(
         utf16.empty() ? nullptr : utf16.data(),
         static_cast<jsize>(utf16.size()));
+}
+
+// Java callbacks receive null rather than "" for absent strings.
+jstring new_nullable_java_string(JNIEnv *env, const std::string &value) {
+    return value.empty() ? nullptr : new_java_string_from_utf8(env, value);
 }
 
 bool byte_array_to_vector(JNIEnv *env, jbyteArray value,
@@ -463,87 +488,62 @@ void progress_report(GhosttyTerminal, void *userdata,
     engine->pending_progress_value = static_cast<int>(report->progress);
 }
 
+void notify_string_changed(TermuxGhosttyEngine *engine, jmethodID method,
+                           const std::string &value, const char *operation) {
+    with_java_env(engine, operation, [&](JNIEnv *env) {
+        jstring java_value = new_nullable_java_string(env, value);
+        if (!env->ExceptionCheck()) {
+            env->CallVoidMethod(engine->output, method, java_value);
+        }
+        if (java_value) env->DeleteLocalRef(java_value);
+    });
+}
+
+void notify_strings_changed(TermuxGhosttyEngine *engine, jmethodID method,
+                            const std::string &first,
+                            const std::string &second,
+                            const char *operation) {
+    with_java_env(engine, operation, [&](JNIEnv *env) {
+        jstring java_first = new_nullable_java_string(env, first);
+        jstring java_second = new_nullable_java_string(env, second);
+        if (!env->ExceptionCheck()) {
+            env->CallVoidMethod(engine->output, method, java_first,
+                                java_second);
+        }
+        if (java_first) env->DeleteLocalRef(java_first);
+        if (java_second) env->DeleteLocalRef(java_second);
+    });
+}
+
 void notify_title_changed(TermuxGhosttyEngine *engine,
                           const std::string &old_title,
                           const std::string &new_title) {
-    bool attached;
-    JNIEnv *env = get_env(engine, &attached);
-    if (!env) return;
-    jstring old_value = old_title.empty() ? nullptr :
-        new_java_string_from_utf8(env, old_title);
-    jstring new_value = new_title.empty() ? nullptr :
-        new_java_string_from_utf8(env, new_title);
-    if (!env->ExceptionCheck()) {
-        env->CallVoidMethod(engine->output, engine->title_method, old_value,
-                            new_value);
-    }
-    if (old_value) env->DeleteLocalRef(old_value);
-    if (new_value) env->DeleteLocalRef(new_value);
-    clear_java_exception(env, "title callback");
-    release_env(engine, attached);
-}
-
-void notify_string_changed(TermuxGhosttyEngine *engine, jmethodID method,
-                           const std::string &value, const char *operation) {
-    bool attached;
-    JNIEnv *env = get_env(engine, &attached);
-    if (!env) return;
-    jstring java_value = value.empty() ? nullptr :
-        new_java_string_from_utf8(env, value);
-    if (!env->ExceptionCheck()) {
-        env->CallVoidMethod(engine->output, method, java_value);
-    }
-    if (java_value) env->DeleteLocalRef(java_value);
-    clear_java_exception(env, operation);
-    release_env(engine, attached);
+    notify_strings_changed(engine, engine->title_method, old_title, new_title,
+                           "title callback");
 }
 
 void notify_mouse_shape_changed(TermuxGhosttyEngine *engine, int shape) {
-    bool attached;
-    JNIEnv *env = get_env(engine, &attached);
-    if (!env) return;
-    env->CallVoidMethod(engine->output, engine->mouse_shape_method,
-                        static_cast<jint>(shape));
-    clear_java_exception(env, "mouse shape callback");
-    release_env(engine, attached);
-}
-
-void notify_desktop_notification(TermuxGhosttyEngine *engine,
-                                 const std::string &title,
-                                 const std::string &body) {
-    bool attached;
-    JNIEnv *env = get_env(engine, &attached);
-    if (!env) return;
-    jstring java_title = title.empty() ? nullptr :
-        new_java_string_from_utf8(env, title);
-    jstring java_body = body.empty() ? nullptr :
-        new_java_string_from_utf8(env, body);
-    if (!env->ExceptionCheck()) {
-        env->CallVoidMethod(engine->output,
-                            engine->desktop_notification_method,
-                            java_title, java_body);
-    }
-    if (java_title) env->DeleteLocalRef(java_title);
-    if (java_body) env->DeleteLocalRef(java_body);
-    clear_java_exception(env, "desktop notification callback");
-    release_env(engine, attached);
+    with_java_env(engine, "mouse shape callback", [&](JNIEnv *env) {
+        env->CallVoidMethod(engine->output, engine->mouse_shape_method,
+                            static_cast<jint>(shape));
+    });
 }
 
 void notify_progress_report(TermuxGhosttyEngine *engine, int state,
                             int progress) {
-    bool attached;
-    JNIEnv *env = get_env(engine, &attached);
-    if (!env) return;
-    env->CallVoidMethod(engine->output, engine->progress_report_method,
-                        static_cast<jint>(state),
-                        static_cast<jint>(progress));
-    clear_java_exception(env, "progress report callback");
-    release_env(engine, attached);
+    with_java_env(engine, "progress report callback", [&](JNIEnv *env) {
+        env->CallVoidMethod(engine->output, engine->progress_report_method,
+                            static_cast<jint>(state),
+                            static_cast<jint>(progress));
+    });
 }
 
-std::string ghostty_string(const GhosttyString &value) {
-    if (!value.ptr || value.len == 0) return {};
-    return {reinterpret_cast<const char *>(value.ptr), value.len};
+// MIME types are restricted to visible ASCII, excluding spaces.
+bool is_visible_ascii(const GhosttyString &value) {
+    const auto *bytes = static_cast<const uint8_t *>(value.ptr);
+    return std::all_of(bytes, bytes + value.len, [](uint8_t byte) {
+        return byte >= 0x21 && byte <= 0x7e;
+    });
 }
 
 GhosttyClipboardWriteResult clipboard_write_result(
@@ -574,11 +574,8 @@ GhosttyClipboardWriteResult clipboard_write_result(
         if (content.data.len > kMaxClipboardBytes - total_bytes)
             return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
         total_bytes += content.data.len;
-        const auto *mime = static_cast<const uint8_t *>(content.mime.ptr);
-        for (size_t j = 0; j < content.mime.len; ++j) {
-            if (mime[j] < 0x21 || mime[j] > 0x7e)
-                return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
-        }
+        if (!is_visible_ascii(content.mime))
+            return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
     }
 
     bool attached;
@@ -597,33 +594,22 @@ GhosttyClipboardWriteResult clipboard_write_result(
         if (mimes) env->DeleteLocalRef(mimes);
         if (data) env->DeleteLocalRef(data);
     };
+    auto fail = [&]() {
+        cleanup_allocations();
+        release_env(engine, attached);
+        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+    };
 
     string_class = env->FindClass("java/lang/String");
-    if (!string_class || env->ExceptionCheck()) {
-        cleanup_allocations();
-        release_env(engine, attached);
-        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
-    }
+    if (!string_class || env->ExceptionCheck()) return fail();
     bytes_class = env->FindClass("[B");
-    if (!bytes_class || env->ExceptionCheck()) {
-        cleanup_allocations();
-        release_env(engine, attached);
-        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
-    }
+    if (!bytes_class || env->ExceptionCheck()) return fail();
     mimes = env->NewObjectArray(
         static_cast<jsize>(write->contents_len), string_class, nullptr);
-    if (!mimes || env->ExceptionCheck()) {
-        cleanup_allocations();
-        release_env(engine, attached);
-        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
-    }
+    if (!mimes || env->ExceptionCheck()) return fail();
     data = env->NewObjectArray(
         static_cast<jsize>(write->contents_len), bytes_class, nullptr);
-    if (!data || env->ExceptionCheck()) {
-        cleanup_allocations();
-        release_env(engine, attached);
-        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
-    }
+    if (!data || env->ExceptionCheck()) return fail();
     try {
         for (size_t i = 0; i < write->contents_len; ++i) {
             const auto &content = write->contents[i];
@@ -657,15 +643,9 @@ GhosttyClipboardWriteResult clipboard_write_result(
             if (env->ExceptionCheck()) break;
         }
     } catch (const std::bad_alloc &) {
-        cleanup_allocations();
-        release_env(engine, attached);
-        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
+        return fail();
     }
-    if (item_allocation_failed || env->ExceptionCheck()) {
-        cleanup_allocations();
-        release_env(engine, attached);
-        return GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR;
-    }
+    if (item_allocation_failed || env->ExceptionCheck()) return fail();
 
     jint result = env->CallIntMethod(
         engine->output, engine->clipboard_write_method,
@@ -704,7 +684,10 @@ void clipboard_read(GhosttyTerminal, void *userdata,
 
     GhosttyClipboardReadReply reply{};
     reply.size = sizeof(reply);
-    reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_DENIED;
+    auto send_reply = [&](decltype(reply.result) result) {
+        reply.result = result;
+        read->reply(read, &reply);
+    };
 
     constexpr size_t kMaxClipboardBytes = 64 * 1024 * 1024;
     constexpr size_t kMaxRequestedMimes = 4;
@@ -712,20 +695,17 @@ void clipboard_read(GhosttyTerminal, void *userdata,
     constexpr size_t kMaxMimeBytes = 256;
 
     if (read->location != GHOSTTY_CLIPBOARD_LOCATION_STANDARD) {
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_UNSUPPORTED;
-        read->reply(read, &reply);
+        send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_UNSUPPORTED);
         return;
     }
     if (read->mimes_len == 0 && !read->list) {
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS;
-        read->reply(read, &reply);
+        send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS);
         return;
     }
     const bool reads_content = read->mimes_len > 0;
     if (engine->clipboard_read_requests_remaining == 0 ||
         (reads_content && engine->clipboard_read_bytes_remaining == 0)) {
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
-        read->reply(read, &reply);
+        send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR);
         return;
     }
     --engine->clipboard_read_requests_remaining;
@@ -733,32 +713,22 @@ void clipboard_read(GhosttyTerminal, void *userdata,
         (read->mimes_len > 0 && !read->mimes) ||
         read->name.len > kMaxMimeBytes ||
         (read->name.len > 0 && !read->name.ptr)) {
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
-        read->reply(read, &reply);
+        send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR);
         return;
     }
     for (size_t i = 0; i < read->mimes_len; ++i) {
         if (!read->mimes[i].ptr || read->mimes[i].len == 0 ||
-            read->mimes[i].len > kMaxMimeBytes) {
-            reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
-            read->reply(read, &reply);
+            read->mimes[i].len > kMaxMimeBytes ||
+            !is_visible_ascii(read->mimes[i])) {
+            send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR);
             return;
-        }
-        const auto *mime = static_cast<const uint8_t *>(read->mimes[i].ptr);
-        for (size_t j = 0; j < read->mimes[i].len; ++j) {
-            if (mime[j] < 0x21 || mime[j] > 0x7e) {
-                reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
-                read->reply(read, &reply);
-                return;
-            }
         }
     }
 
     bool attached;
     JNIEnv *env = get_env(engine, &attached);
     if (!env) {
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
-        read->reply(read, &reply);
+        send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR);
         return;
     }
     jint permission = 1;
@@ -770,8 +740,7 @@ void clipboard_read(GhosttyTerminal, void *userdata,
                 if (name) env->DeleteLocalRef(name);
                 clear_java_exception(env, "clipboard permission allocation");
                 release_env(engine, attached);
-                reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
-                read->reply(read, &reply);
+                send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR);
                 return;
             }
             permission = env->CallIntMethod(
@@ -782,15 +751,14 @@ void clipboard_read(GhosttyTerminal, void *userdata,
             if (env->ExceptionCheck() || permission <= 0) {
                 clear_java_exception(env, "clipboard permission callback");
                 release_env(engine, attached);
-                read->reply(read, &reply);
+                send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_DENIED);
                 return;
             }
         }
     } catch (const std::bad_alloc &) {
         clear_java_exception(env, "clipboard permission allocation");
         release_env(engine, attached);
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
-        read->reply(read, &reply);
+        send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR);
         return;
     }
 
@@ -803,8 +771,7 @@ void clipboard_read(GhosttyTerminal, void *userdata,
         env->CallVoidMethod(engine->output, engine->clipboard_read_complete_method);
         clear_java_exception(env, "clipboard read completion");
         release_env(engine, attached);
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
-        read->reply(read, &reply);
+        send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR);
         return;
     }
 
@@ -896,7 +863,6 @@ void clipboard_read(GhosttyTerminal, void *userdata,
     }
     if (!failed) {
         engine->clipboard_read_bytes_remaining -= content_bytes;
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS;
         reply.contents = contents.empty() ? nullptr : contents.data();
         reply.contents_len = contents.size();
         reply.remember = permission == 2 && read->can_remember;
@@ -904,21 +870,17 @@ void clipboard_read(GhosttyTerminal, void *userdata,
             reply.available = available.empty() ? nullptr : available.data();
             reply.available_len = available.size();
         }
-        read->reply(read, &reply);
+        send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS);
     } else {
-        reply.result = GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR;
-        read->reply(read, &reply);
+        send_reply(GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR);
     }
     release_env(engine, attached);
 }
 
 void colors_changed(TermuxGhosttyEngine *engine) {
-    bool attached;
-    JNIEnv *env = get_env(engine, &attached);
-    if (!env) return;
-    env->CallVoidMethod(engine->output, engine->colors_method);
-    clear_java_exception(env, "colors callback");
-    release_env(engine, attached);
+    with_java_env(engine, "colors callback", [&](JNIEnv *env) {
+        env->CallVoidMethod(engine->output, engine->colors_method);
+    });
 }
 
 bool read_background(GhosttyTerminal terminal, GhosttyColorRgb *color) {
@@ -927,8 +889,11 @@ bool read_background(GhosttyTerminal terminal, GhosttyColorRgb *color) {
         GHOSTTY_SUCCESS;
 }
 
-bool colors_equal(GhosttyColorRgb left, GhosttyColorRgb right) {
-    return left.r == right.r && left.g == right.g && left.b == right.b;
+bool background_changed(bool had_before, GhosttyColorRgb before,
+                        bool has_after, GhosttyColorRgb after) {
+    if (had_before != has_after) return true;
+    return had_before && (before.r != after.r || before.g != after.g ||
+                          before.b != after.b);
 }
 
 bool decode_png(void *, const GhosttyAllocator *allocator, const uint8_t *data,
@@ -1066,6 +1031,21 @@ jbyteArray vector_to_byte_array(JNIEnv *env, const uint8_t *data,
     return result;
 }
 
+// Copies a buffer allocated by libghostty's default allocator into a Java
+// byte array and frees the native buffer.
+jbyteArray take_ghostty_bytes(JNIEnv *env, uint8_t *data, size_t length) {
+    jbyteArray bytes = vector_to_byte_array(env, data, length);
+    ghostty_free(nullptr, data, length);
+    return bytes;
+}
+
+template <size_t N>
+jintArray new_int_array(JNIEnv *env, const jint (&values)[N]) {
+    jintArray array = env->NewIntArray(static_cast<jsize>(N));
+    if (array) env->SetIntArrayRegion(array, 0, static_cast<jsize>(N), values);
+    return array;
+}
+
 jbyteArray format_transcript(JNIEnv *env, TermuxGhosttyEngine *engine,
                              bool unwrap, bool trim) {
     GhosttyFormatter formatter = nullptr;
@@ -1084,9 +1064,7 @@ jbyteArray format_transcript(JNIEnv *env, TermuxGhosttyEngine *engine,
         ghostty_formatter_format_alloc(formatter, nullptr, &data, &length);
     ghostty_formatter_free(formatter);
     if (result != GHOSTTY_SUCCESS) return nullptr;
-    jbyteArray bytes = vector_to_byte_array(env, data, length);
-    ghostty_free(nullptr, data, length);
-    return bytes;
+    return take_ghostty_bytes(env, data, length);
 }
 
 bool relative_viewport_ref(TermuxGhosttyEngine *engine, int column, int row,
@@ -1133,9 +1111,7 @@ jbyteArray format_selection(JNIEnv *env, TermuxGhosttyEngine *engine,
     GhosttyResult result = ghostty_terminal_selection_format_alloc(
         engine->terminal, nullptr, options, &data, &length);
     if (result != GHOSTTY_SUCCESS) return nullptr;
-    jbyteArray bytes = vector_to_byte_array(env, data, length);
-    ghostty_free(nullptr, data, length);
-    return bytes;
+    return take_ghostty_bytes(env, data, length);
 }
 
 void destroy_engine(JNIEnv *env, TermuxGhosttyEngine *engine) {
@@ -1359,13 +1335,11 @@ Java_com_termux_terminal_GhosttyTerminal_nativeMeasureFont(
             throw_illegal_state(env, error.c_str());
             return nullptr;
         }
-        jint values[] = {
+        const jint values[] = {
             static_cast<jint>(width),
             static_cast<jint>(height),
         };
-        jintArray result = env->NewIntArray(2);
-        if (result) env->SetIntArrayRegion(result, 0, 2, values);
-        return result;
+        return new_int_array(env, values);
     } catch (const std::bad_alloc &) {
         throw_illegal_state(env, "Out of memory measuring terminal fonts");
         return nullptr;
@@ -1469,8 +1443,9 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
             notify_mouse_shape_changed(engine, new_mouse_shape);
         }
         if (has_notification) {
-            notify_desktop_notification(engine, notification_title,
-                                        notification_body);
+            notify_strings_changed(engine, engine->desktop_notification_method,
+                                   notification_title, notification_body,
+                                   "desktop notification callback");
         }
         if (has_progress) {
             notify_progress_report(engine, progress_state, progress_value);
@@ -1478,8 +1453,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFeed(
         for (const auto &event : program_events) {
             notify_program_status(env, engine, event);
         }
-        if (had_before != has_after ||
-            (had_before && !colors_equal(before, after))) {
+        if (background_changed(had_before, before, has_after, after)) {
             colors_changed(engine);
         }
     } catch (const std::bad_alloc &) {
@@ -1544,8 +1518,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeReset(
         notify_progress_report(
             engine, GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE, -1);
         notify_program_status(env, engine, TermuxGhosttyEngine::ProgramStatusEvent{});
-        if (had_before != has_after ||
-            (had_before && !colors_equal(before, after))) {
+        if (background_changed(had_before, before, has_after, after)) {
             colors_changed(engine);
         }
     } catch (const std::bad_alloc &) {
@@ -1556,47 +1529,28 @@ Java_com_termux_terminal_GhosttyTerminal_nativeReset(
 extern "C" JNIEXPORT jint JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeGetInt(
     JNIEnv *, jclass, jlong handle, jint data) {
-    auto *engine = termux_ghostty_engine_from_handle(handle);
-    uint64_t value = 0;
-    termux_ghostty_engine_lock(engine);
-    ghostty_terminal_get(engine->terminal,
-                         static_cast<GhosttyTerminalData>(data), &value);
-    termux_ghostty_engine_unlock(engine);
-    return static_cast<jint>(value);
+    return static_cast<jint>(terminal_data<uint64_t>(
+        handle, static_cast<GhosttyTerminalData>(data)));
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeGetMouseShape(
     JNIEnv *, jclass, jlong handle) {
-    auto *engine = termux_ghostty_engine_from_handle(handle);
-    GhosttyMouseShape value = GHOSTTY_MOUSE_SHAPE_TEXT;
-    ScopedEngineLock lock(engine);
-    ghostty_terminal_get(engine->terminal,
-                         GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE, &value);
-    return static_cast<jint>(value);
+    return static_cast<jint>(terminal_data(
+        handle, GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE, GHOSTTY_MOUSE_SHAPE_TEXT));
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeGetBoolean(
     JNIEnv *, jclass, jlong handle, jint data) {
-    auto *engine = termux_ghostty_engine_from_handle(handle);
-    bool value = false;
-    termux_ghostty_engine_lock(engine);
-    ghostty_terminal_get(engine->terminal,
-                         static_cast<GhosttyTerminalData>(data), &value);
-    termux_ghostty_engine_unlock(engine);
-    return value;
+    return terminal_data<bool>(handle, static_cast<GhosttyTerminalData>(data));
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeGetBackgroundColor(
     JNIEnv *, jclass, jlong handle) {
-    auto *engine = termux_ghostty_engine_from_handle(handle);
-    GhosttyColorRgb color{};
-    termux_ghostty_engine_lock(engine);
-    ghostty_terminal_get(engine->terminal,
-                         GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND, &color);
-    termux_ghostty_engine_unlock(engine);
+    GhosttyColorRgb color = terminal_data<GhosttyColorRgb>(
+        handle, GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND);
     return static_cast<jint>(0xff000000u |
         (static_cast<uint32_t>(color.r) << 16u) |
         (static_cast<uint32_t>(color.g) << 8u) | color.b);
@@ -1611,7 +1565,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeGetString(
     value = terminal_string(engine->terminal,
                             static_cast<GhosttyTerminalData>(data));
     termux_ghostty_engine_unlock(engine);
-    return value.empty() ? nullptr : new_java_string_from_utf8(env, value);
+    return new_nullable_java_string(env, value);
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -1671,29 +1625,18 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSetColorScheme(
         return;
     }
     jint *values = env->GetIntArrayElements(colors, nullptr);
-    GhosttyColorRgb palette[256];
-    for (size_t i = 0; i < 256; ++i) {
-        palette[i] = {
-            static_cast<uint8_t>((values[i] >> 16) & 0xff),
-            static_cast<uint8_t>((values[i] >> 8) & 0xff),
-            static_cast<uint8_t>(values[i] & 0xff),
+    auto rgb = [](jint argb) -> GhosttyColorRgb {
+        return {
+            static_cast<uint8_t>((argb >> 16) & 0xff),
+            static_cast<uint8_t>((argb >> 8) & 0xff),
+            static_cast<uint8_t>(argb & 0xff),
         };
-    }
-    GhosttyColorRgb foreground{
-        static_cast<uint8_t>((values[256] >> 16) & 0xff),
-        static_cast<uint8_t>((values[256] >> 8) & 0xff),
-        static_cast<uint8_t>(values[256] & 0xff),
     };
-    GhosttyColorRgb background{
-        static_cast<uint8_t>((values[257] >> 16) & 0xff),
-        static_cast<uint8_t>((values[257] >> 8) & 0xff),
-        static_cast<uint8_t>(values[257] & 0xff),
-    };
-    GhosttyColorRgb cursor{
-        static_cast<uint8_t>((values[258] >> 16) & 0xff),
-        static_cast<uint8_t>((values[258] >> 8) & 0xff),
-        static_cast<uint8_t>(values[258] & 0xff),
-    };
+    GhosttyColorRgb palette[256];
+    for (size_t i = 0; i < 256; ++i) palette[i] = rgb(values[i]);
+    GhosttyColorRgb foreground = rgb(values[256]);
+    GhosttyColorRgb background = rgb(values[257]);
+    GhosttyColorRgb cursor = rgb(values[258]);
     env->ReleaseIntArrayElements(colors, values, JNI_ABORT);
 
     auto *engine = termux_ghostty_engine_from_handle(handle);
@@ -2035,13 +1978,11 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSearch(
         return nullptr;
     }
 
-    jint values[] = {
+    const jint values[] = {
         result == GHOSTTY_SUCCESS ? static_cast<jint>(selected + 1) : 0,
         result == GHOSTTY_SUCCESS ? static_cast<jint>(total) : 0,
     };
-    jintArray array = env->NewIntArray(2);
-    if (array) env->SetIntArrayRegion(array, 0, 2, values);
-    return array;
+    return new_int_array(env, values);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -2102,7 +2043,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSelectWordOrOutput(
     termux_ghostty_engine_unlock(engine);
     if (!ok) return nullptr;
 
-    jint values[] = {
+    const jint values[] = {
         static_cast<jint>(start.x),
         static_cast<jint>(static_cast<int64_t>(start.y) -
                           static_cast<int64_t>(scrollbar.offset)),
@@ -2110,9 +2051,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSelectWordOrOutput(
         static_cast<jint>(static_cast<int64_t>(end.y) -
                           static_cast<int64_t>(scrollbar.offset)),
     };
-    jintArray result = env->NewIntArray(4);
-    if (result) env->SetIntArrayRegion(result, 0, 4, values);
-    return result;
+    return new_int_array(env, values);
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
@@ -2186,9 +2125,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeGetSelectedText(
         engine->terminal, nullptr, options, &data, &length);
     termux_ghostty_engine_unlock(engine);
     if (result != GHOSTTY_SUCCESS) return nullptr;
-    jbyteArray bytes = vector_to_byte_array(env, data, length);
-    ghostty_free(nullptr, data, length);
-    return bytes;
+    return take_ghostty_bytes(env, data, length);
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL

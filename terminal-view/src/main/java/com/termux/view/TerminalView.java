@@ -374,7 +374,6 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
             case GhosttyTerminal.MOUSE_SHAPE_POINTER:
                 return PointerIcon.TYPE_HAND;
             case GhosttyTerminal.MOUSE_SHAPE_PROGRESS:
-                return PointerIcon.TYPE_WAIT;
             case GhosttyTerminal.MOUSE_SHAPE_WAIT:
                 return PointerIcon.TYPE_WAIT;
             case GhosttyTerminal.MOUSE_SHAPE_CELL:

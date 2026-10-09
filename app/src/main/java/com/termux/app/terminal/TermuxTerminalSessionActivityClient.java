@@ -390,15 +390,13 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             Map<String, String> textRepresentations = new LinkedHashMap<>();
             for (int i = 0; i < mimeTypes.length; i++) {
                 if (mimeTypes[i] == null || data[i] == null ||
-                    data[i].length > MAX_OSC_CLIPBOARD_BYTES - totalBytes)
-                    return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
-                if (mimeTypes[i].length() > MAX_OSC_CLIPBOARD_MIME_LENGTH)
+                    data[i].length > MAX_OSC_CLIPBOARD_BYTES - totalBytes ||
+                    mimeTypes[i].length() > MAX_OSC_CLIPBOARD_MIME_LENGTH)
                     return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
                 totalBytes += data[i].length;
                 String normalized = normalizeMimeType(mimeTypes[i]);
-                if (!isTextMimeType(normalized))
-                    return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
-                if (!isPlainTextMimeType(normalized) && !isConcreteMimeType(normalized))
+                if (!isTextMimeType(normalized) ||
+                    (!isPlainTextMimeType(normalized) && !isConcreteMimeType(normalized)))
                     return TerminalOutput.OSC_CLIPBOARD_RESULT_UNSUPPORTED;
                 String value = decodeClipboardText(data[i]);
                 if (value == null) return TerminalOutput.OSC_CLIPBOARD_RESULT_INVALID_DATA;
@@ -500,15 +498,11 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             Set<String> types = new LinkedHashSet<>();
             boolean hasText = false;
             for (int i = 0; i < clip.getItemCount(); i++) {
-                if (clip.getItemAt(i).getText() != null) {
-                    hasText = true;
-                    break;
-                }
-            }
-            for (int i = 0; i < clip.getItemCount(); i++) {
                 ClipData.Item item = clip.getItemAt(i);
-                if (item.getText() != null)
+                if (item.getText() != null) {
+                    hasText = true;
                     if (!addClipboardMimeType(types, ClipDescription.MIMETYPE_TEXT_PLAIN)) return null;
+                }
                 if (item.getHtmlText() != null)
                     if (!addClipboardMimeType(types, ClipDescription.MIMETYPE_TEXT_HTML) ||
                         !addClipboardMimeType(types, ClipDescription.MIMETYPE_TEXT_PLAIN)) return null;
@@ -571,9 +565,9 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
                                      String mimeType) {
         if (!isCurrentClipboardSession(session, location) || mimeType == null) return null;
         try {
-            ClipData clip = mClipboardReadSession == session ? mClipboardReadClip : null;
-            Set<String> availableTypes = mClipboardReadSession == session
-                ? mClipboardReadMimeTypes : null;
+            if (mClipboardReadSession != session) return null;
+            ClipData clip = mClipboardReadClip;
+            Set<String> availableTypes = mClipboardReadMimeTypes;
             if (clip == null || availableTypes == null || clip.getItemCount() == 0) return null;
             String normalized = normalizeMimeType(mimeType);
             String advertisedType = isPlainTextMimeType(normalized)
@@ -584,8 +578,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             if (ClipDescription.MIMETYPE_TEXT_URILIST.equals(normalized)) {
                 if (clip.getItemCount() > MAX_OSC_CLIPBOARD_URI_ITEMS) return null;
                 StringBuilder uris = new StringBuilder();
-                for (int i = 0; i < clip.getItemCount() &&
-                        i < MAX_OSC_CLIPBOARD_URI_ITEMS; i++) {
+                for (int i = 0; i < clip.getItemCount(); i++) {
                     Uri uri = clip.getItemAt(i).getUri();
                     if (uri == null) continue;
                     if (uris.length() > 0) uris.append('\n');
@@ -605,47 +598,42 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
                     return encodeClipboardText(
                         item.getIntent().toUri(Intent.URI_INTENT_SCHEME));
                 Uri uri = item.getUri();
+                if (uri == null) continue;
                 String uriMimeType = null;
                 try {
-                    if (uri != null) uriMimeType = resolver.getType(uri);
+                    uriMimeType = resolver.getType(uri);
                 } catch (RuntimeException e) {
                     uriReadFailure = e;
                 }
-                if (uri != null && uriMimeType != null &&
+                if (uriMimeType != null &&
                     ClipDescription.compareMimeTypes(
                         normalizeMimeType(uriMimeType), normalized)) {
                     try (InputStream input = resolver.openInputStream(uri)) {
                         if (input != null) return readClipboardBytes(input);
-                    } catch (IOException e) {
-                        uriReadFailure = e;
-                    } catch (RuntimeException e) {
+                    } catch (IOException | RuntimeException e) {
                         uriReadFailure = e;
                     }
                 }
-                if (uri != null) {
-                    String[] streamTypes;
-                    try {
-                        streamTypes = resolver.getStreamTypes(uri, normalized);
-                    } catch (RuntimeException e) {
-                        uriReadFailure = e;
-                        continue;
-                    }
-                    if (streamTypes == null) continue;
-                    if (streamTypes.length > MAX_OSC_CLIPBOARD_MIME_TYPES) continue;
-                    for (String streamType : streamTypes) {
-                        if (!ClipDescription.compareMimeTypes(
-                                normalizeMimeType(streamType), normalized)) continue;
-                        try (AssetFileDescriptor descriptor =
-                                 resolver.openTypedAssetFileDescriptor(uri, streamType, null)) {
-                            if (descriptor == null) continue;
-                            try (InputStream input = descriptor.createInputStream()) {
-                                return readClipboardBytes(input);
-                            }
-                        } catch (IOException e) {
-                            uriReadFailure = e;
-                        } catch (RuntimeException e) {
-                            uriReadFailure = e;
+                String[] streamTypes;
+                try {
+                    streamTypes = resolver.getStreamTypes(uri, normalized);
+                } catch (RuntimeException e) {
+                    uriReadFailure = e;
+                    continue;
+                }
+                if (streamTypes == null || streamTypes.length > MAX_OSC_CLIPBOARD_MIME_TYPES)
+                    continue;
+                for (String streamType : streamTypes) {
+                    if (!ClipDescription.compareMimeTypes(
+                            normalizeMimeType(streamType), normalized)) continue;
+                    try (AssetFileDescriptor descriptor =
+                             resolver.openTypedAssetFileDescriptor(uri, streamType, null)) {
+                        if (descriptor == null) continue;
+                        try (InputStream input = descriptor.createInputStream()) {
+                            return readClipboardBytes(input);
                         }
+                    } catch (IOException | RuntimeException e) {
+                        uriReadFailure = e;
                     }
                 }
             }
@@ -658,24 +646,24 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
                     if (item.getHtmlText() != null)
                         return encodeClipboardText(android.text.Html.fromHtml(item.getHtmlText()));
                     Uri textUri = item.getUri();
-                    String textUriType = null;
-                    try {
-                        if (textUri != null) textUriType = resolver.getType(textUri);
-                    } catch (RuntimeException e) {
-                        uriReadFailure = e;
-                    }
-                    if (textUri != null && textUriType != null &&
-                        ClipDescription.compareMimeTypes(
-                            normalizeMimeType(textUriType), "text/*")) {
-                        try (InputStream input = resolver.openInputStream(textUri)) {
-                            if (input != null) return readClipboardBytes(input);
-                        } catch (IOException e) {
-                            uriReadFailure = e;
+                    if (textUri != null) {
+                        String textUriType = null;
+                        try {
+                            textUriType = resolver.getType(textUri);
                         } catch (RuntimeException e) {
                             uriReadFailure = e;
                         }
+                        if (textUriType != null &&
+                            ClipDescription.compareMimeTypes(
+                                normalizeMimeType(textUriType), "text/*")) {
+                            try (InputStream input = resolver.openInputStream(textUri)) {
+                                if (input != null) return readClipboardBytes(input);
+                            } catch (IOException | RuntimeException e) {
+                                uriReadFailure = e;
+                            }
+                        }
+                        return encodeClipboardText(textUri.toString());
                     }
-                    if (textUri != null) return encodeClipboardText(textUri.toString());
                     Intent intent = item.getIntent();
                     if (intent != null)
                         return encodeClipboardText(intent.toUri(Intent.URI_INTENT_SCHEME));
@@ -688,12 +676,9 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
                 Logger.logStackTraceWithMessage(
                     LOG_TAG, "Failed to read an OSC clipboard URI", uriReadFailure);
             return null;
-        } catch (IOException e) {
-            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read OSC clipboard", e);
-            return null;
         } catch (SecurityException e) {
             return null;
-        } catch (RuntimeException e) {
+        } catch (IOException | RuntimeException e) {
             Logger.logStackTraceWithMessage(LOG_TAG, "Failed to read OSC clipboard", e);
             return null;
         }

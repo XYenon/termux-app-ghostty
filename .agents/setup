@@ -142,12 +142,7 @@ if ! grep -Fqx "$profile_source" "$HOME/.bash_profile" 2>/dev/null; then
     printf '\n%s\n' "$profile_source" >> "$HOME/.bash_profile"
 fi
 
-export JAVA_HOME="$java_home"
-export ANDROID_HOME="$android_sdk_root"
-export ANDROID_SDK_ROOT="$android_sdk_root"
-export ANDROID_NDK_HOME="$android_sdk_root/ndk/29.0.14206865"
-export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
-export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$zig_home:$HOME/.local/bin:$PATH"
+source "$environment_file"
 
 step "Warming Gradle and verifying project configuration"
 cd "$repo_root"
