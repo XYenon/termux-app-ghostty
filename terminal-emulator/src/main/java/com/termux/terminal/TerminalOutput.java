@@ -49,19 +49,9 @@ public abstract class TerminalOutput {
     /** Notify the terminal client that text should be copied to clipboard. */
     public abstract void onCopyTextToClipboard(String text);
 
-    /** Legacy single-representation clipboard callback. */
-    @Deprecated
-    public abstract int onOscClipboard(int location, String mimeType,
-                                       byte[] data, boolean clear);
-
     /** Apply decoded OSC clipboard representations to the host clipboard. */
-    public int onOscClipboard(int location, String[] mimeTypes,
-                              byte[][] data, boolean clear) {
-        if (clear) return onOscClipboard(location, (String) null, (byte[]) null, true);
-        if (mimeTypes == null || data == null || mimeTypes.length != 1 || data.length != 1)
-            return OSC_CLIPBOARD_RESULT_UNSUPPORTED;
-        return onOscClipboard(location, mimeTypes[0], data[0], false);
-    }
+    public abstract int onOscClipboard(int location, String[] mimeTypes,
+                                       byte[][] data, boolean clear);
 
     /** Ask whether a terminal program may read the host clipboard. */
     public int onOscClipboardReadPermission(String name, boolean granted,
@@ -71,18 +61,11 @@ public abstract class TerminalOutput {
 
     /** List MIME representations available from the host clipboard. */
     public String[] onOscClipboardMimeTypes(int location) {
-        return new String[]{"text/plain"};
+        return null;
     }
-
-    /** Legacy plain-text clipboard read callback. */
-    @Deprecated
-    public abstract byte[] onOscClipboardRead(int location);
 
     /** Read one MIME representation from the host clipboard. */
-    public byte[] onOscClipboardRead(int location, String mimeType) {
-        return "text/plain".equalsIgnoreCase(mimeType)
-            ? onOscClipboardRead(location) : null;
-    }
+    public abstract byte[] onOscClipboardRead(int location, String mimeType);
 
     /** Release the clipboard snapshot used by the current OSC read. */
     public void onOscClipboardReadComplete() {

@@ -196,7 +196,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         if (terminal != null &&
             mActivity.getProperties().shouldOpenTerminalTranscriptURLOnClick()) {
             int[] columnAndRow =
-                mActivity.getTerminalView().getColumnAndRow(e, true);
+                mActivity.getTerminalView().getColumnAndRow(e);
             String wordAtTap =
                 terminal.getWordAt(columnAndRow[0], columnAndRow[1]);
             String url = getUrlAtTap(wordAtTap);

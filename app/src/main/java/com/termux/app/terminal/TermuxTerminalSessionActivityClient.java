@@ -354,15 +354,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     }
 
     @Override
-    @Deprecated
-    public int onOscClipboard(@NonNull TerminalSession session, int location,
-                              String mimeType, byte[] data, boolean clear) {
-        return onOscClipboard(session, location,
-            clear ? new String[0] : new String[]{mimeType},
-            clear ? new byte[0][] : new byte[][]{data}, clear);
-    }
-
-    @Override
     public int onOscClipboard(@NonNull TerminalSession session, int location,
                               String[] mimeTypes, byte[][] data, boolean clear) {
         if (!mActivity.isVisible() || mActivity.getCurrentSession() != session)
@@ -546,17 +537,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             return types.toArray(new String[0]);
         } catch (RuntimeException e) {
             return null;
-        }
-    }
-
-    @Override
-    @Deprecated
-    public byte[] onOscClipboardRead(@NonNull TerminalSession session, int location) {
-        if (onOscClipboardMimeTypes(session, location) == null) return null;
-        try {
-            return onOscClipboardRead(session, location, ClipDescription.MIMETYPE_TEXT_PLAIN);
-        } finally {
-            onOscClipboardReadComplete(session);
         }
     }
 

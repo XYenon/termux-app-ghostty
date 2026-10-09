@@ -663,13 +663,9 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
      * position of the event.
      *
      * @param event The event with the position to get the column and row for.
-     * @param relativeToScroll If true the column number will take the scroll
-     * position into account. E.g. if scrolled 3 lines up and the event
-     * position is in the top left, column will be -3 if relativeToScroll is
-     * true and 0 if relativeToScroll is false.
      * @return Array with the column and row.
      */
-    public int[] getColumnAndRow(MotionEvent event, boolean relativeToScroll) {
+    public int[] getColumnAndRow(MotionEvent event) {
         int column = (int) (event.getX() / mCellWidth);
         int row = (int) (event.getY() / mCellHeight);
         return new int[] { column, row };
@@ -1438,13 +1434,6 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         return Math.round(cy * mCellHeight);
     }
 
-    public int getTopRow() {
-        return 0;
-    }
-
-    public void setTopRow(int ignored) {
-    }
-
     /**
      * Scroll while a selection is active and return the row adjustment needed
      * to keep existing endpoints on the same terminal rows.
@@ -1896,7 +1885,7 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
             return;
         }
 
-        int[] point = getColumnAndRow(event, true);
+        int[] point = getColumnAndRow(event);
         mContextHyperlink = getHyperlinkAt(point[0], point[1]);
         showTextSelectionCursors(event);
         mClient.copyModeChanged(isSelectingText());

@@ -61,12 +61,6 @@ public abstract class TerminalTestCase extends TestCase {
 		}
 
         @Override
-        @Deprecated
-        public int onOscClipboard(int location, String mimeType, byte[] data, boolean clear) {
-            return OSC_CLIPBOARD_RESULT_DENIED;
-        }
-
-        @Override
         public int onOscClipboard(int location, String[] mimeTypes, byte[][] data, boolean clear) {
             return OSC_CLIPBOARD_RESULT_SUCCESS;
         }
@@ -80,12 +74,6 @@ public abstract class TerminalTestCase extends TestCase {
         @Override
         public String[] onOscClipboardMimeTypes(int location) {
             return new String[]{"text/plain"};
-        }
-
-        @Override
-        @Deprecated
-        public byte[] onOscClipboardRead(int location) {
-            return null;
         }
 
         @Override

@@ -49,15 +49,14 @@ public class TermuxTerminalSessionClientBase implements TerminalSessionClient {
     }
 
     @Override
-    @Deprecated
     public int onOscClipboard(@NonNull TerminalSession session, int location,
-                              String mimeType, byte[] data, boolean clear) {
+                              String[] mimeTypes, byte[][] data, boolean clear) {
         return TerminalOutput.OSC_CLIPBOARD_RESULT_DENIED;
     }
 
     @Override
-    @Deprecated
-    public byte[] onOscClipboardRead(@NonNull TerminalSession session, int location) {
+    public byte[] onOscClipboardRead(@NonNull TerminalSession session, int location,
+                                     String mimeType) {
         return null;
     }
 

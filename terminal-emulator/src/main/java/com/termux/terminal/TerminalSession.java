@@ -394,12 +394,6 @@ public final class TerminalSession extends TerminalOutput {
     }
 
     @Override
-    @Deprecated
-    public int onOscClipboard(int location, String mimeType, byte[] data, boolean clear) {
-        return mClient.onOscClipboard(this, location, mimeType, data, clear);
-    }
-
-    @Override
     public int onOscClipboard(int location, String[] mimeTypes, byte[][] data, boolean clear) {
         return mClient.onOscClipboard(this, location, mimeTypes, data, clear);
     }
@@ -417,12 +411,6 @@ public final class TerminalSession extends TerminalOutput {
     @Override
     public String[] onOscClipboardMimeTypes(int location) {
         return mClient.onOscClipboardMimeTypes(this, location);
-    }
-
-    @Override
-    @Deprecated
-    public byte[] onOscClipboardRead(int location) {
-        return mClient.onOscClipboardRead(this, location);
     }
 
     @Override
