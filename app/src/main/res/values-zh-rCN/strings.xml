@@ -51,6 +51,8 @@
     <string name="title_find_in_terminal">在终端中查找</string>
     <string name="terminal_search_results_count">第 %1$d / %2$d 项</string>
     <string name="terminal_search_no_matches">无匹配项</string>
+    <string name="terminal_search_submit">点击键盘搜索以查找</string>
+    <string name="action_close_terminal_search">关闭终端搜索</string>
     <string name="action_find_next">下一个</string>
     <string name="action_find_previous">上一个</string>
     <string name="action_select_url">选择网址</string>

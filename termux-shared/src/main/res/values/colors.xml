@@ -9,6 +9,10 @@
     <color name="red_400">#FF0000</color>
     <color name="red_800">#C4001D</color>
 
+    <!-- Dialog actions need a darker red on light surfaces and a lighter red at night. -->
+    <color name="color_dialog_action">@color/red_800</color>
+    <color name="extra_keys_active_text">#FF8A80</color>
+
     <color name="grey_200">#EEEEEE</color>
     <color name="grey_400">#BDBDBD</color>
     <color name="grey_500">#9E9E9E</color>

@@ -1,24 +1,25 @@
 package com.termux.app.terminal;
 
 import android.annotation.SuppressLint;
-import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.res.ColorStateList;
-import android.content.res.TypedArray;
+import android.graphics.drawable.ColorDrawable;
 import android.media.AudioManager;
 import android.os.Environment;
+import android.text.Editable;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.KeyEvent;
+import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
-import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -48,7 +49,8 @@ import com.termux.shared.view.KeyboardUtils;
 import com.termux.shared.view.ViewUtils;
 import com.termux.terminal.GhosttyTerminal;
 import com.termux.terminal.TerminalSession;
-import com.google.android.material.button.MaterialButton;
+import com.google.android.material.color.MaterialColors;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -58,6 +60,7 @@ import java.util.List;
 import java.util.Map;
 
 import androidx.drawerlayout.widget.DrawerLayout;
+import androidx.appcompat.app.AlertDialog;
 
 public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
@@ -732,118 +735,67 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         GhosttyTerminal terminal = session.getTerminal();
         if (terminal == null) return;
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(mActivity);
-        Context dialogContext = builder.getContext();
-        int padding = (int) (12 * mActivity.getResources().getDisplayMetrics().density);
-        int buttonWidth = (int) (44 * mActivity.getResources().getDisplayMetrics().density);
-        LinearLayout content = new LinearLayout(dialogContext);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(padding, padding / 2, padding, padding / 2);
-
-        TextView status = new TextView(dialogContext);
-        status.setTextSize(18);
-        status.setSingleLine();
-
-        MaterialButton close = new MaterialButton(
-            dialogContext, null, android.R.attr.buttonBarButtonStyle);
-        close.setText("×");
-        close.setTextSize(22);
-        close.setMinimumWidth(0);
-        close.setContentDescription(mActivity.getString(android.R.string.cancel));
-
-        LinearLayout header = new LinearLayout(dialogContext);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(status, new LinearLayout.LayoutParams(
-            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        content.addView(header, new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout controls = new LinearLayout(dialogContext);
-        controls.setGravity(Gravity.CENTER_VERTICAL);
-        EditText input = new EditText(dialogContext);
-        input.setSingleLine();
-        input.setHint(R.string.title_find_in_terminal);
-        status.setPadding(input.getPaddingLeft(), status.getPaddingTop(),
-            status.getPaddingRight(), status.getPaddingBottom());
-        controls.addView(input, new LinearLayout.LayoutParams(
-            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-
-        MaterialButton previous = new MaterialButton(
-            dialogContext, null, android.R.attr.buttonBarButtonStyle);
-        previous.setText("↑");
-        previous.setTextSize(22);
-        previous.setMinimumWidth(0);
-        previous.setContentDescription(mActivity.getString(R.string.action_find_previous));
-        header.addView(previous, new LinearLayout.LayoutParams(
-            buttonWidth, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        MaterialButton next = new MaterialButton(
-            dialogContext, null, android.R.attr.buttonBarButtonStyle);
-        next.setText("↓");
-        next.setTextSize(22);
-        next.setMinimumWidth(0);
-        next.setContentDescription(mActivity.getString(R.string.action_find_next));
-        header.addView(next, new LinearLayout.LayoutParams(
-            buttonWidth, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        controls.addView(close, new LinearLayout.LayoutParams(
-            buttonWidth, LinearLayout.LayoutParams.WRAP_CONTENT));
-        content.addView(controls, new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT));
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(mActivity);
+        View content = LayoutInflater.from(builder.getContext())
+            .inflate(R.layout.dialog_terminal_search, null);
+        EditText input = content.findViewById(R.id.terminal_search_input);
+        TextView status = content.findViewById(R.id.terminal_search_status);
+        View previous = content.findViewById(R.id.terminal_search_previous);
+        View next = content.findViewById(R.id.terminal_search_next);
 
         AlertDialog dialog = builder.setView(content).create();
-        previous.setOnClickListener(
-            view -> searchTerminal(status, input, terminal, true));
-        next.setOnClickListener(
-            view -> searchTerminal(status, input, terminal, false));
-        close.setOnClickListener(view -> dialog.dismiss());
+        previous.setOnClickListener(view -> searchTerminal(content, terminal, true));
+        next.setOnClickListener(view -> searchTerminal(content, terminal, false));
+        content.findViewById(R.id.terminal_search_close).setOnClickListener(view -> dialog.dismiss());
         dialog.setOnDismissListener(ignored -> {
             terminal.clearSearch();
             if (mActivity.getCurrentSession() == session)
                 mActivity.getTerminalView().onScreenUpdated(true);
         });
+        input.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            @Override public void afterTextChanged(Editable text) {
+                terminal.clearSearch();
+                status.setText(text.length() == 0 ? null : mActivity.getString(R.string.terminal_search_submit));
+                previous.setEnabled(text.length() > 0);
+                next.setEnabled(text.length() > 0);
+                mActivity.getTerminalView().onScreenUpdated(true);
+            }
+        });
         input.setOnEditorActionListener((view, actionId, event) -> {
-            searchTerminal(status, input, terminal, true);
+            if (actionId != EditorInfo.IME_ACTION_SEARCH &&
+                (event == null || event.getKeyCode() != KeyEvent.KEYCODE_ENTER ||
+                    event.getAction() != KeyEvent.ACTION_DOWN)) return false;
+            searchTerminal(content, terminal, true);
             return true;
         });
+        input.requestFocus();
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
-            TypedArray colors = dialog.getContext().obtainStyledAttributes(
-                new int[]{com.google.android.material.R.attr.colorSurface,
-                    android.R.attr.textColorPrimary});
-            try {
-                content.setBackgroundColor(colors.getColor(0, 0xff000000));
-                ColorStateList buttonTextColor = colors.getColorStateList(1);
-                if (buttonTextColor != null) {
-                    previous.setTextColor(buttonTextColor);
-                    next.setTextColor(buttonTextColor);
-                    close.setTextColor(buttonTextColor);
-                }
-            } finally {
-                colors.recycle();
-            }
-            window.setBackgroundDrawableResource(android.R.color.transparent);
+            window.setBackgroundDrawable(new ColorDrawable(MaterialColors.getColor(content,
+                com.google.android.material.R.attr.colorSurface)));
             window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
             window.setGravity(Gravity.BOTTOM);
             window.getDecorView().setPadding(0, 0, 0, 0);
             window.setLayout(WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.WRAP_CONTENT);
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
+                | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         }
     }
 
-    private void searchTerminal(TextView status, EditText input,
-                                GhosttyTerminal terminal, boolean next) {
+    private void searchTerminal(View content, GhosttyTerminal terminal, boolean next) {
+        EditText input = content.findViewById(R.id.terminal_search_input);
+        TextView status = content.findViewById(R.id.terminal_search_status);
         String query = input.getText().toString();
         if (query.isEmpty()) {
-            terminal.clearSearch();
-            status.setText(null);
-            mActivity.getTerminalView().onScreenUpdated(true);
             return;
         }
         int[] result = terminal.search(query, next);
+        content.findViewById(R.id.terminal_search_previous).setEnabled(result[1] > 0);
+        content.findViewById(R.id.terminal_search_next).setEnabled(result[1] > 0);
         if (result[1] == 0) {
             status.setText(R.string.terminal_search_no_matches);
         } else {
@@ -861,7 +813,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
         LinkedHashSet<CharSequence> urlSet = TermuxUrlUtils.extractUrls(text);
         if (urlSet.isEmpty()) {
-            new AlertDialog.Builder(mActivity).setMessage(R.string.title_select_url_none_found).show();
+            new MaterialAlertDialogBuilder(mActivity).setMessage(R.string.title_select_url_none_found).show();
             return;
         }
 
@@ -869,7 +821,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         Collections.reverse(Arrays.asList(urls)); // Latest first.
 
         // Click to copy url to clipboard:
-        final AlertDialog dialog = new AlertDialog.Builder(mActivity).setItems(urls, (di, which) -> {
+        final AlertDialog dialog = new MaterialAlertDialogBuilder(mActivity).setItems(urls, (di, which) -> {
             String url = (String) urls[which];
             ShareUtils.copyTextToClipboard(mActivity, url, mActivity.getString(R.string.msg_select_url_copied_to_clipboard));
         }).setTitle(R.string.title_select_url_dialog).create();

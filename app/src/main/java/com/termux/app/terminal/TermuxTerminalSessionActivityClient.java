@@ -5,7 +5,6 @@ import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipDescription;
 import android.content.ClipboardManager;
@@ -15,7 +14,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.AssetFileDescriptor;
 import android.content.res.ColorStateList;
-import android.content.res.TypedArray;
 import android.net.Uri;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
@@ -26,8 +24,10 @@ import android.widget.ProgressBar;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 
 import com.termux.R;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.termux.shared.interact.ShareUtils;
 import com.termux.shared.notification.NotificationUtils;
 import com.termux.shared.termux.notification.TermuxNotificationUtils;
@@ -717,7 +717,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         if (Looper.myLooper() != Looper.getMainLooper() ||
             mClipboardPermissionPromptShowing) return CLIPBOARD_PERMISSION_DENIED;
         final int[] result = {CLIPBOARD_PERMISSION_DENIED};
-        AlertDialog.Builder builder = new AlertDialog.Builder(mActivity)
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(mActivity)
             .setTitle(R.string.title_clipboard_read_permission)
             .setMessage(R.string.msg_clipboard_read_permission)
             .setPositiveButton(R.string.action_clipboard_allow_once, null)
@@ -726,20 +726,6 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
             builder.setNeutralButton(R.string.action_clipboard_always_allow, null);
         AlertDialog dialog = builder.create();
         dialog.show();
-        TypedArray dialogColors = dialog.getContext().obtainStyledAttributes(
-            new int[]{android.R.attr.textColorPrimary});
-        ColorStateList buttonTextColor;
-        try {
-            buttonTextColor = dialogColors.getColorStateList(0);
-        } finally {
-            dialogColors.recycle();
-        }
-        if (buttonTextColor != null) {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(buttonTextColor);
-            if (canRemember)
-                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setTextColor(buttonTextColor);
-            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(buttonTextColor);
-        }
         mClipboardPermissionPromptShowing = true;
         mClipboardPermissionDialog = dialog;
         mClipboardPermissionResult = result;
@@ -1073,7 +1059,7 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         if (service == null) return;
 
         if (service.getTermuxSessionsSize() >= MAX_SESSIONS) {
-            new AlertDialog.Builder(mActivity).setTitle(R.string.title_max_terminals_reached).setMessage(R.string.msg_max_terminals_reached)
+            new MaterialAlertDialogBuilder(mActivity).setTitle(R.string.title_max_terminals_reached).setMessage(R.string.msg_max_terminals_reached)
                 .setPositiveButton(android.R.string.ok, null).show();
         } else {
             TerminalSession currentSession = mActivity.getCurrentSession();

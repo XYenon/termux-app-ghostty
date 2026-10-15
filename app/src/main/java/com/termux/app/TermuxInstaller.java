@@ -1,15 +1,17 @@
 package com.termux.app;
 
 import android.app.Activity;
-import android.app.AlertDialog;
-import android.app.ProgressDialog;
 import android.content.Context;
 import android.os.Environment;
 import android.system.Os;
 import android.util.Pair;
 import android.view.WindowManager;
+import android.widget.ProgressBar;
+
+import androidx.appcompat.app.AlertDialog;
 
 import com.termux.R;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.termux.shared.file.FileUtils;
 import com.termux.shared.shell.command.ExecutionCommand;
 import com.termux.shared.shell.command.runner.app.AppShell;
@@ -115,7 +117,15 @@ final class TermuxInstaller {
             Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + TERMUX_PREFIX_DIR_PATH + "\" does not exist but another file exists at its destination.");
         }
 
-        final ProgressDialog progress = ProgressDialog.show(activity, null, activity.getString(R.string.bootstrap_installer_body), true, false);
+        MaterialAlertDialogBuilder progressBuilder = new MaterialAlertDialogBuilder(activity);
+        ProgressBar spinner = new ProgressBar(progressBuilder.getContext());
+        int padding = Math.round(24 * activity.getResources().getDisplayMetrics().density);
+        spinner.setPadding(padding, padding, padding, padding);
+        final AlertDialog progress = progressBuilder
+            .setMessage(R.string.bootstrap_installer_body)
+            .setView(spinner)
+            .setCancelable(false)
+            .show();
         new Thread() {
             @Override
             public void run() {
@@ -280,7 +290,7 @@ final class TermuxInstaller {
 
         activity.runOnUiThread(() -> {
             try {
-                new AlertDialog.Builder(activity).setTitle(R.string.bootstrap_error_title).setMessage(R.string.bootstrap_error_body)
+                new MaterialAlertDialogBuilder(activity).setTitle(R.string.bootstrap_error_title).setMessage(R.string.bootstrap_error_body)
                     .setNegativeButton(R.string.bootstrap_error_abort, (dialog, which) -> {
                         dialog.dismiss();
                         activity.finish();

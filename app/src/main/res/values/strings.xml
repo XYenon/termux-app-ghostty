@@ -81,6 +81,8 @@
     <string name="title_find_in_terminal">Find in terminal</string>
     <string name="terminal_search_results_count">%1$d / %2$d</string>
     <string name="terminal_search_no_matches">No matches</string>
+    <string name="terminal_search_submit">Press Search to find</string>
+    <string name="action_close_terminal_search">Close terminal search</string>
     <string name="action_find_next">Next</string>
     <string name="action_find_previous">Previous</string>
     <string name="action_select_url">Select URL</string>

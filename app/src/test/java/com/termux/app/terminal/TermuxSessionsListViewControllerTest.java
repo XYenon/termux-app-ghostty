@@ -1,6 +1,5 @@
 package com.termux.app.terminal;
 
-import android.app.AlertDialog;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.os.SystemClock;
@@ -11,6 +10,7 @@ import android.widget.FrameLayout;
 import android.widget.ListView;
 import android.widget.TextView;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.drawerlayout.widget.DrawerLayout;
 
 import com.termux.R;
@@ -30,7 +30,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.GraphicsMode;
 import org.robolectric.android.controller.ActivityController;
-import org.robolectric.shadows.ShadowAlertDialog;
+import org.robolectric.shadows.ShadowDialog;
 import org.robolectric.shadows.ShadowLooper;
 import org.robolectric.util.ReflectionHelpers;
 
@@ -82,7 +82,7 @@ public class TermuxSessionsListViewControllerTest {
         assertTrue(status.getText().toString().startsWith("Blocked · Approval needed"));
         capture(row, "program-status-blocked", 280);
         adapter.onItemClick(null, row, 0, 0);
-        AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
+        AlertDialog dialog = (AlertDialog) ShadowDialog.getLatestDialog();
         String details = ((TextView) dialog.findViewById(android.R.id.message)).getText().toString();
         assertTrue(details.contains("Apply the planned changes"));
         assertTrue(details.contains("Running 12 tests"));
@@ -97,7 +97,7 @@ public class TermuxSessionsListViewControllerTest {
         row = adapter.getView(0, row, parent);
         capture(row, "program-status-done", 280);
         adapter.onItemClick(null, row, 0, 0);
-        ShadowAlertDialog.getLatestAlertDialog().getButton(AlertDialog.BUTTON_NEUTRAL).performClick();
+        ((AlertDialog) ShadowDialog.getLatestDialog()).getButton(AlertDialog.BUTTON_NEUTRAL).performClick();
         ShadowLooper.idleMainLooper();
         assertTrue(session.getProgramStatuses().isEmpty());
         row = adapter.getView(0, row, parent);
@@ -147,13 +147,13 @@ public class TermuxSessionsListViewControllerTest {
             tapSecondRow(list, target);
             assertSame(second, activity.getCurrentSession());
             assertFalse(drawer.isDrawerOpen(Gravity.LEFT));
-            assertNull(ShadowAlertDialog.getLatestAlertDialog());
+            assertNull(ShadowDialog.getLatestDialog());
         }
 
         for (int target : new int[]{R.id.session_title, R.id.session_program_status, 0}) {
             drawer.openDrawer(Gravity.LEFT, false);
             tapSecondRow(list, target);
-            AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
+            AlertDialog dialog = (AlertDialog) ShadowDialog.getLatestDialog();
             assertTrue(dialog.isShowing());
             String details = ((TextView) dialog.findViewById(android.R.id.message)).getText().toString();
             assertTrue(details.contains("Second session status"));
@@ -171,7 +171,7 @@ public class TermuxSessionsListViewControllerTest {
         tapSecondRow(list, R.id.session_title);
         assertSame(second, activity.getCurrentSession());
         assertFalse(drawer.isDrawerOpen(Gravity.LEFT));
-        assertFalse(ShadowAlertDialog.getLatestAlertDialog().isShowing());
+        assertFalse(ShadowDialog.getLatestDialog().isShowing());
     }
 
     private static void tapSecondRow(ListView list, int target) {

@@ -1,7 +1,6 @@
 package com.termux.app.terminal;
 
 import android.annotation.SuppressLint;
-import android.app.AlertDialog;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Typeface;
@@ -20,6 +19,8 @@ import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 
 import com.termux.R;
+import com.google.android.material.color.MaterialColors;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.termux.app.TermuxActivity;
 import com.termux.shared.termux.shell.command.runner.terminal.TermuxSession;
 import com.termux.shared.theme.NightMode;
@@ -93,7 +94,8 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
             sessionTitleView.setPaintFlags(sessionTitleView.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG);
         }
         int defaultColor = shouldEnableDarkTheme ? Color.WHITE : Color.BLACK;
-        int color = sessionRunning || sessionAtRow.getExitStatus() == 0 ? defaultColor : Color.RED;
+        int color = sessionRunning || sessionAtRow.getExitStatus() == 0 ? defaultColor
+            : MaterialColors.getColor(sessionRowView, com.google.android.material.R.attr.colorError);
         sessionTitleView.setTextColor(color);
 
         List<ProgramStatusStore.Record> statuses = sessionAtRow.getProgramStatuses();
@@ -131,7 +133,7 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
             ? java.util.Collections.emptyList() : clickedSession.getProgramStatuses();
         if (clickedSession != null && clickedSession == mActivity.getCurrentSession()
             && !statuses.isEmpty()) {
-            new AlertDialog.Builder(mActivity)
+            new MaterialAlertDialogBuilder(mActivity)
                 .setTitle(mActivity.getString(R.string.program_status_details, position + 1))
                 .setMessage(programStatusText(statuses))
                 .setPositiveButton(android.R.string.ok, null)

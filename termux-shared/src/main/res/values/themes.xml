@@ -27,6 +27,7 @@
         <!-- Text color. -->
         <item name="android:textColorPrimary">@color/black</item>
         <item name="android:textColorLink">@color/blue_link_light</item>
+        <item name="colorAccent">@color/color_dialog_action</item>
 
         <!--
          Dialog Themes.
@@ -73,9 +74,10 @@
      -->
     <style name="ThemeOverlay.BaseDialog.Light" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
         <!-- Primary brand color. -->
-        <item name="colorPrimary">@color/red_400</item>
+        <item name="colorPrimary">@color/color_dialog_action</item>
         <item name="colorPrimaryVariant">@color/red_800</item>
         <item name="colorOnPrimary">@color/white</item>
+        <item name="colorAccent">@color/color_dialog_action</item>
 
         <!-- Secondary brand color. -->
         <item name="colorSecondary">@color/grey_900</item>
@@ -85,12 +87,9 @@
         <!-- Surface color. -->
         <item name="colorSurface">@color/design_default_color_surface</item>
         <item name="colorOnSurface">@color/design_default_color_on_surface</item>
-
-        <!-- Dialog title panel style. -->
-        <item name="materialAlertDialogTitlePanelStyle">@style/BaseDialog.Title.Panel</item>
-
-        <!-- Dialog message text style. -->
-        <item name="materialAlertDialogBodyTextStyle">@style/BaseDialog.Message.Text.Light</item>
+        <item name="android:textColorPrimary">?attr/colorOnSurface</item>
+        <item name="android:textColorHint">?android:attr/textColorSecondary</item>
+        <item name="android:textColorLink">@color/blue_link_light</item>
     </style>
 
     <!-- BaseDialog DayNight theme. -->
