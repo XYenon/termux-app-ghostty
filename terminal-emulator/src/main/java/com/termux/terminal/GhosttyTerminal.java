@@ -345,6 +345,12 @@ public final class GhosttyTerminal implements AutoCloseable {
         if (handle != 0) nativeScrollViewport(handle, rows);
     }
 
+    /** Navigate OSC 133 prompt groups; negative counts move backward. */
+    public synchronized void scrollToPrompt(int count) {
+        long handle = getHandleIfOpen();
+        if (handle != 0) nativeScrollToPrompt(handle, count);
+    }
+
     public synchronized void scrollToBottom() {
         long handle = getHandleIfOpen();
         if (handle != 0) nativeScrollToBottom(handle);
@@ -617,6 +623,7 @@ public final class GhosttyTerminal implements AutoCloseable {
                                                   int cellHeight);
     private static native void nativeSendFocus(long handle, boolean focused);
     private static native void nativeScrollViewport(long handle, int rows);
+    private static native void nativeScrollToPrompt(long handle, int count);
     private static native void nativeScrollToBottom(long handle);
     private static native int[] nativeSearch(long handle, byte[] query,
                                              boolean next);

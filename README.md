@@ -28,6 +28,8 @@
 ### Terminal features
 
 - **Find in terminal** from the terminal context menu, with next/previous navigation and a match counter.
+- **Prompt navigation** from `Previous prompt` / `Next prompt` in the terminal context menu, or
+  `Ctrl+Alt+PageUp` / `Ctrl+Alt+PageDown`, for shells that emit OSC 133 prompt markers.
 - **OSC 52 clipboard** with multi-MIME read and write, an explicit permission prompt (allow once / always allow /
   deny) and a 64 MiB payload limit.
 - **OSC 7, OSC 9, OSC 777, OSC 9;4 and OSC 22**: working directory reporting, desktop notifications, a progress bar
@@ -68,7 +70,8 @@
   notifications are posted as Android notifications (Android 13+ asks for the notification permission).
 - **Program status**: OSC 7501 reports appear below each session title in the sidebar. Tap the status to see
   all tasks, including their messages and IDs. Completed and failed tasks stay until you choose `Dismiss finished`;
-  a new OSC 133 prompt or process exit clears active tasks. These reports do not post Android notifications.
+  a new OSC 133 prompt or process exit clears active tasks. Tasks without an `app` inherit it from their nearest
+  retained ancestor. These reports do not post Android notifications.
 - **Screen checksum reports**: set `vt-xt-checksum-report = true` in `~/.termux/termux.properties` when needed for
   terminal diagnostics. The default is `false`, since a program can query individual cells to recover previous
   screen output. Run `termux-reload-settings` to apply changes to running sessions. XTCHECKSUM selects the

@@ -100,6 +100,35 @@ public class ProgramStatusStoreTest {
     }
 
     @Test
+    public void appInheritanceTracksNearestAncestorWithoutChangingStoredReports() {
+        ProgramStatusStore store = new ProgramStatusStore();
+        store.update(report("build/test/unit", WORKING));
+        store.update(report("builder/test", WORKING));
+        assertEquals("", store.snapshot().get(0).app);
+
+        store.update(new Record(WORKING, KIND_NONE, -1, "", "root", "", ""));
+        List<Record> fromRoot = store.snapshot();
+        assertEquals("root", fromRoot.get(0).app);
+        store.update(new Record(WORKING, KIND_NONE, -1, "build", "cargo", "", ""));
+        assertEquals("cargo", store.snapshot().get(0).app);
+        assertEquals("root", store.snapshot().get(1).app);
+        assertEquals("root", fromRoot.get(0).app);
+
+        store.update(new Record(BLOCKED, KIND_AUTH, -1, "build/test", "runner", "", ""));
+        assertEquals("runner", store.snapshot().get(0).app);
+        store.update(report("build/test", WORKING));
+        assertEquals("cargo", store.snapshot().get(0).app);
+        store.update(new Record(WORKING, KIND_NONE, -1, "build/test/unit", "explicit", "", ""));
+        store.update(new Record(DONE, KIND_NONE, -1, "build", "updated", "", ""));
+        assertEquals("explicit", store.snapshot().get(3).app);
+
+        store.update(report("build", CLEAR));
+        assertEquals(2, store.snapshot().size());
+        assertEquals("root", store.snapshot().get(0).app);
+        assertEquals("builder/test", store.snapshot().get(0).id);
+    }
+
+    @Test
     public void formatControlsAreRemovedWithoutLosingUnicodeOrTreatingTextAsMarkup() {
         Record record = new Record(BLOCKED, KIND_QUESTION, -1, "task", "agent",
             "\u202e确认\u2069", "<b>继续 😀?</b>\u200b");

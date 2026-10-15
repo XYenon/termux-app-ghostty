@@ -80,8 +80,23 @@ public final class ProgramStatusStore {
 
     /** Oldest update first; callers cannot mutate the stored records. */
     public List<Record> snapshot() {
-        if (snapshot == null)
-            snapshot = Collections.unmodifiableList(new ArrayList<>(records.values()));
+        if (snapshot == null) {
+            List<Record> resolved = new ArrayList<>(records.size());
+            for (Record record : records.values()) {
+                String app = record.app;
+                String parentId = record.id;
+                while (app.isEmpty() && !parentId.isEmpty()) {
+                    int slash = parentId.lastIndexOf('/');
+                    parentId = slash < 0 ? "" : parentId.substring(0, slash);
+                    Record parent = records.get(parentId);
+                    if (parent != null) app = parent.app;
+                }
+                resolved.add(app.equals(record.app) ? record : new Record(
+                    record.state, record.kind, record.progress, record.id, app,
+                    record.title, record.message));
+            }
+            snapshot = Collections.unmodifiableList(resolved);
+        }
         return snapshot;
     }
 }

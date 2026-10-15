@@ -67,8 +67,10 @@ public class TermuxSessionsListViewControllerTest {
         assertEquals(View.GONE, status.getVisibility());
         capture(row, "program-status-default", 280);
 
+        session.onProgramStatusReport(ProgramStatusStore.WORKING, 0, -1,
+            "build", "cargo", "Build", "");
         session.onProgramStatusReport(ProgramStatusStore.WORKING, 0, 37,
-            "build/test", "cargo", "Tests", "Running 12 tests");
+            "build/test", "", "Tests", "Running 12 tests");
         session.updateTerminalSessionClient(new TermuxTerminalSessionClientBase());
         row = adapter.getView(0, row, parent);
         assertEquals(View.VISIBLE, status.getVisibility());

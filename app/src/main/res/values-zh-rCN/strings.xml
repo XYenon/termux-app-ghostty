@@ -48,6 +48,8 @@
     <string name="msg_enabling_terminal_toolbar">正在启用终端工具栏</string>
     <string name="msg_disabling_terminal_toolbar">正在禁用终端工具栏</string>
     <string name="action_find_in_terminal">在终端中查找</string>
+    <string name="action_previous_prompt">上一个提示符</string>
+    <string name="action_next_prompt">下一个提示符</string>
     <string name="title_find_in_terminal">在终端中查找</string>
     <string name="terminal_search_results_count">第 %1$d / %2$d 项</string>
     <string name="terminal_search_no_matches">无匹配项</string>

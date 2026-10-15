@@ -184,6 +184,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_OPEN_HYPERLINK = 12;
     private static final int CONTEXT_MENU_COPY_HYPERLINK = 13;
     private static final int CONTEXT_MENU_SEARCH_TERMINAL = 14;
+    private static final int CONTEXT_MENU_PREVIOUS_PROMPT = 15;
+    private static final int CONTEXT_MENU_NEXT_PROMPT = 16;
     private static final int CONTEXT_MENU_AUTOFILL_PASSWORD = 2;
     private static final int CONTEXT_MENU_RESET_TERMINAL_ID = 3;
     private static final int CONTEXT_MENU_KILL_PROCESS_ID = 4;
@@ -647,6 +649,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
         menu.add(Menu.NONE, CONTEXT_MENU_SEARCH_TERMINAL, Menu.NONE,
             R.string.action_find_in_terminal);
+        menu.add(Menu.NONE, CONTEXT_MENU_PREVIOUS_PROMPT, Menu.NONE,
+            R.string.action_previous_prompt);
+        menu.add(Menu.NONE, CONTEXT_MENU_NEXT_PROMPT, Menu.NONE,
+            R.string.action_next_prompt);
         menu.add(Menu.NONE, CONTEXT_MENU_SELECT_URL_ID, Menu.NONE, R.string.action_select_url);
         menu.add(Menu.NONE, CONTEXT_MENU_SHARE_TRANSCRIPT_ID, Menu.NONE, R.string.action_share_transcript);
         if (!DataUtils.isNullOrEmpty(mTerminalView.getStoredSelectedText()))
@@ -685,6 +691,12 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 return true;
             case CONTEXT_MENU_SEARCH_TERMINAL:
                 mTermuxTerminalViewClient.showTerminalSearch();
+                return true;
+            case CONTEXT_MENU_PREVIOUS_PROMPT:
+                mTerminalView.scrollToPrompt(-1);
+                return true;
+            case CONTEXT_MENU_NEXT_PROMPT:
+                mTerminalView.scrollToPrompt(1);
                 return true;
             case CONTEXT_MENU_SELECT_URL_ID:
                 mTermuxTerminalViewClient.showUrlSelection();

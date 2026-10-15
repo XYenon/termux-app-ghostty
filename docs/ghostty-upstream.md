@@ -8,6 +8,103 @@ applies `native/patches/ghostty-android.patch`, and builds `libghostty-vt` for
 the configured Android ABIs. Keep the patch limited to C APIs needed by the
 Android JNI and Vulkan renderer.
 
+## 2026-10-16 sync
+
+The pin moved from `7ec9e26a29399b30ef78f06985fc75045b3cecb6` to
+`22fa134a07f5749edd9e92c6bc17d8aaf61843be`, the upstream `main` HEAD queried
+at the start of this sync (October 15 UTC). All 148 commits, including merges,
+and the complete 206-file net diff were reviewed
+([upstream comparison](https://github.com/ghostty-org/ghostty/compare/7ec9e26a29399b30ef78f06985fc75045b3cecb6...22fa134a07f5749edd9e92c6bc17d8aaf61843be)).
+The immutable fetch and four-ABI Zig 0.16.0 / Android API 29 build remain
+compatible. The Android patch applies unchanged: custom glyph introspection,
+generation and width handling, Kitty animation, virtual and relative placement
+geometry, the animation I/O accessor, and the 32-bit page-alignment fix are
+retained. JNI and the Vulkan renderer continue to build against these APIs.
+
+Android integration changes:
+
+- The new `GHOSTTY_SCROLL_VIEWPORT_DELTA_PROMPT` operation is exposed through
+  JNI and the terminal view. `Previous prompt` / `Next prompt` in the context
+  menu and `Ctrl+Alt+PageUp` / `Ctrl+Alt+PageDown` navigate OSC 133 prompt
+  groups. Navigation stops a pending fling and clears text selection. It sends
+  no PTY input; upstream handles continuation prompts, history limits, shells
+  without markers, and alternate-screen behavior. The existing setting that
+  disables Ctrl+Alt shortcuts also disables these shortcuts.
+- OSC 7501 revision 0.4 support replies now list supported states and kinds,
+  using the existing PTY callback and preserving BEL or ST. A report with an
+  empty `app` inherits the nearest retained ancestor's nonempty app, including
+  the root record. Inheritance is resolved for each new immutable snapshot,
+  so late parents, replacement, removal and eviction are reflected without
+  changing raw reports or earlier snapshots. Whole-record replacement,
+  segment-aware subtree clears, the 64-record limit, ordered delivery outside
+  the native lock, prompt/exit cleanup, finished-result dismissal, RIS and
+  explicit reset behavior remain intact. Actual sidebar and detail UI consume
+  these resolved records.
+
+The pin directly brings DECXCPR (`CSI ? 6 n`), terminal-size replies (`CSI 19 t`),
+DECSTR soft reset, default tab-clear and permanently-reset ANSI mode reporting
+fixes. It also fixes grapheme widening across page capacity, cursor lifetime
+when pruning single-row screens, ED2 at blank prompt boundaries, pending wrap
+with DECAWM disabled, wide-character selection/render bounds, VT formatting of
+OSC 8 links and blank wrapped lines, bounded Kitty clipboard alias retention,
+and snapshot page-capacity validation. Existing C API, PTY reply, selection and
+render-state consumers inherit these changes without duplicate host code.
+
+Changes evaluated but not adapted:
+
+- CSI 8 t remains unbound: the Android Activity determines the terminal grid;
+  terminal output cannot resize an Android desktop window. CSI 19 t uses the
+  existing size-report callback instead.
+- OSC 3008's renamed hierarchical-context parser and lazy field unescaping
+  do not yet have a terminal action or C host UI contract. There is no existing
+  Android context consumer to connect.
+- The new desktop surface paste entry point and macOS drag/drop, executable
+  file and URL policies belong to the full desktop runtime. Android already
+  uses the lib-vt paste encoder and its own link/clipboard UI. The upstream
+  unsafe-paste check now recognizes CR as well as LF, but Android intentionally
+  retains its existing `allow_unsafe = true` paste behavior; this sync does not
+  introduce a new paste confirmation policy.
+- GTK 4.18 / libadwaita 1.7 / Blueprint 0.20 minimums, EGL display sharing,
+  desktop notification timers and focus cleanup, tab inversion and signals,
+  macOS display-link ownership and split menus, CLI theme paging, desktop font
+  discovery, Windows TinyIo, build/CI dependencies and translations have no
+  Android lib-vt/Vulkan consumer. The desktop PTY resize locking change also
+  needs no copy: Termux serializes PTY parsing and grid updates on its main
+  handler. The shared Zig path-constant migration is inherited by the build.
+
+Validation for this sync:
+
+- `prepareNativeSources`, `:terminal-emulator:buildGhosttyAndroid` and
+  `:app:buildGhosttyTerminfo` passed. The Ghostty native build covers
+  `arm64-v8a`, `armeabi-v7a`, `x86` and `x86_64`.
+- On the patched source, `zig build test-lib-vt -Demit-lib-vt=true
+  -Doptimize=Debug -j2 --summary all` passed: 45/45 steps, 6,710 tests passed,
+  72 skipped, no failures.
+- `./gradlew --no-daemon test assembleDebug lint` passed (216 tasks).
+  After removing the temporary menu-render validation fixture, `test` passed
+  again: debug and release each have 157 terminal tests and 47 app tests, with
+  no failures or skips. All four modules and both variants have zero lint
+  issues. No build-configuration or Android-patch workaround was necessary.
+- A separate host build of the patched lib-vt passed a C ABI smoke check:
+  exact OSC 7501 capability replies with both terminators, CSI 19 t and
+  DECXCPR replies, prompt offsets in both directions and history clamping,
+  glyph registration/introspection, two-cell layout and reset generation,
+  plus the Kitty animation/virtual-placement APIs with no images present.
+- Robolectric native graphics rendered the real context menu in English and
+  Simplified Chinese at 2x; labels and action dispatch passed. Actual sidebar
+  adapter and dialog tests cover inherited app display, client replacement,
+  prompt cleanup, retained completion and explicit dismissal. Default,
+  working, blocked, done and detail screenshots were visually inspected.
+- All four ABI APKs and the universal APK passed ZIP CRC checks, exact
+  ABI/library-set checks, ELF class/machine checks, exported JNI and custom
+  glyph/Kitty symbol checks, byte-for-byte bundled terminfo checks against
+  generated assets, and `apksigner verify` (v2, existing debug certificate).
+  `infocmp` reads the generated `xterm-ghostty` entry successfully.
+- `git diff --check` passed. Existing SDK XML, target-SDK, NDK ABI metadata,
+  HarfBuzz CMake and older `tic` notices remain toolchain warnings. No Android
+  device is connected, so real-device JNI/PTY/Vulkan behavior and a native
+  pointer/keyboard interaction recording were not exercised.
+
 ## 2026-10-09 sync
 
 The pin moved from `c3203ea4b169a18eb2ccfe92847e426d8afea858` to

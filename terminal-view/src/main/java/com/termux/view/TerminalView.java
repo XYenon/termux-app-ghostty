@@ -712,6 +712,17 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         }
     }
 
+    /** Jump through shell prompt groups without sending input to the PTY. */
+    public void scrollToPrompt(int count) {
+        if (mTerminal == null) return;
+        mScroller.abortAnimation();
+        mScrollRemainder = 0;
+        stopTextSelectionMode();
+        mTerminal.scrollToPrompt(count);
+        awakenScrollBars();
+        requestRender();
+    }
+
     /** Overriding {@link View#onGenericMotionEvent(MotionEvent)}. */
     @Override
     public boolean onGenericMotionEvent(MotionEvent event) {
