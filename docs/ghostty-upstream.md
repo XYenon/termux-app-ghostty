@@ -30,6 +30,26 @@ Android integration changes:
   no PTY input; upstream handles continuation prompts, history limits, shells
   without markers, and alternate-screen behavior. The existing setting that
   disables Ctrl+Alt shortcuts also disables these shortcuts.
+- The pinned Bash, Zsh, Fish, Elvish and Nushell integration sources are now
+  bundled and installed atomically beneath `$PREFIX/share/ghostty` on startup
+  and after bootstrap. Android excludes dotfiles from assets, so `.zshenv`
+  travels as `zshenv` and is restored on install. Bash/Zsh directly source
+  their upstream scripts through an idempotent block appended to the existing
+  system `etc/bash.bashrc` / `etc/zshrc`; existing bytes are preserved.
+  No custom rc-directory scanning mechanism is introduced.
+  Missing package conffiles are not created before their shell is installed.
+  Fish loads through `etc/fish/conf.d`. Nushell uses a vendor autoload loader
+  beneath `share/nushell`, retaining its native OSC 133 settings. Elvish's
+  module is discoverable beneath `share/elvish/lib`; as upstream requires,
+  `use ghostty-integration` activates it. Elvish has no system rc/autoload
+  entry point, so fully automatic activation would require changing user rc
+  handling; no HOME files are changed or generated. Bash/Zsh/Fish startup
+  order and user rc/ZDOTDIR are preserved. Non-failsafe shell environments
+  expose the resource directory and prepend the Termux system share directory
+  to XDG_DATA_DIRS while retaining existing entries. Desktop CLI wrappers,
+  title and cursor features remain disabled. This fixes the reproduced case
+  where an unintegrated zsh produces no OSC 133 marks and navigation cannot
+  move. A new session is needed; old unmarked history cannot be reconstructed.
 - OSC 7501 revision 0.4 support replies now list supported states and kinds,
   using the existing PTY callback and preserving BEL or ST. A report with an
   empty `app` inherits the nearest retained ancestor's nonempty app, including
@@ -104,6 +124,18 @@ Validation for this sync:
   HarfBuzz CMake and older `tic` notices remain toolchain warnings. No Android
   device is connected, so real-device JNI/PTY/Vulkan behavior and a native
   pointer/keyboard interaction recording were not exercised.
+
+Shell integration follow-up validation used real Bash 5.2, Zsh 5.9, Fish 3.6,
+Nushell 0.116.1 and Elvish 0.19.2 in PTYs, feeding their output live into the
+patched host lib-vt (including PTY query replies). Unintegrated Zsh produced
+zero OSC 133 marks and viewport offsets `16 -> 16 -> 16 -> 16`. With system
+loaders, previous/previous/next moved Zsh `16 -> 15 -> 12 -> 15`, Bash/Fish/Nu
+`14 -> 12 -> 9 -> 12`, and Elvish after its explicit import
+`15 -> 13 -> 10 -> 13`. A custom ZDOTDIR passed the same Zsh navigation and
+startup checks. User rc bytes were unchanged and no integration files appeared
+under HOME. Robolectric checks cover all bundled resources, repair, system rc
+preservation, idempotent loading and absent-package behavior. These host checks
+do not substitute for a connected Android device.
 
 ## 2026-10-09 sync
 

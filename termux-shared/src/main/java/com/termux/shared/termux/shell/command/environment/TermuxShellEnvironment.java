@@ -14,12 +14,14 @@ import com.termux.shared.shell.command.ExecutionCommand;
 import com.termux.shared.shell.command.environment.AndroidShellEnvironment;
 import com.termux.shared.shell.command.environment.ShellEnvironmentUtils;
 import com.termux.shared.shell.command.environment.ShellCommandShellEnvironment;
+import com.termux.shared.termux.GhosttyShellIntegration;
 import com.termux.shared.termux.GhosttyTerminfo;
 import com.termux.shared.termux.TermuxBootstrap;
 import com.termux.shared.termux.TermuxConstants;
 import com.termux.shared.termux.shell.TermuxShellUtils;
 
 import java.nio.charset.Charset;
+import java.io.File;
 import java.util.HashMap;
 
 /**
@@ -100,6 +102,8 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
 
         // If failsafe is not enabled, then we keep default PATH and TMPDIR so that system binaries can be used
         if (!isFailSafe) {
+            GhosttyShellIntegration.setupEnvironment(environment,
+                new File(GhosttyShellIntegration.RESOURCES_DIR));
             environment.put(ENV_TMPDIR, TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
             if (TermuxBootstrap.isAppPackageVariantAPTAndroid5()) {
                 // Termux in android 5/6 era shipped busybox binaries in applets directory

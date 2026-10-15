@@ -4,6 +4,7 @@ plugins {
 
 def ghosttySrc = new File(rootProject.ext.nativeSourcesDir, "ghostty")
 def ghosttyTerminfoAssets = new File(project.buildDir, "generated/ghosttyTerminfo/assets")
+def ghosttyShellAssets = new File(project.buildDir, "generated/ghosttyShellIntegration/assets")
 
 ext {
     // The packageVariant defines the bootstrap variant that will be included in the app APK.
@@ -40,6 +41,7 @@ android {
     compileSdkVersion project.properties.compileSdkVersion.toInteger()
     ndkVersion project.properties.ndkVersion
     sourceSets.main.assets.srcDir ghosttyTerminfoAssets
+    sourceSets.main.assets.srcDir ghosttyShellAssets
     def appVersionName = System.getenv("TERMUX_APP_VERSION_NAME") ?: ""
     def apkVersionTag = System.getenv("TERMUX_APK_VERSION_TAG") ?: ""
     def splitAPKsForDebugBuilds = System.getenv("TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS") ?: "1"
@@ -203,11 +205,23 @@ tasks.register("buildGhosttyTerminfo", Exec) {
         "ghostty/terminfo/x/xterm-ghostty")
 }
 
+tasks.register("copyGhosttyShellIntegration", Sync) {
+    dependsOn rootProject.tasks.named("prepareNativeSources")
+    from(new File(ghosttySrc, "src/shell-integration")) {
+        include "bash/**", "zsh/**", "fish/**", "elvish/**", "nushell/**"
+        // Android's asset merger excludes dotfiles. Restore the name on install.
+        rename { name -> name == ".zshenv" ? "zshenv" : name }
+    }
+    from("src/main/shell-integration")
+    into new File(ghosttyShellAssets, "ghostty/shell-integration")
+}
+
 tasks.matching { task ->
     (task.name.startsWith("merge") && task.name.endsWith("Assets")) ||
         (task.name.contains("Release") && task.name.toLowerCase().contains("lint"))
 }.configureEach {
     dependsOn tasks.named("buildGhosttyTerminfo")
+    dependsOn tasks.named("copyGhosttyShellIntegration")
 }
 
 task versionName {

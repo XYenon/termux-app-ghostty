@@ -30,6 +30,14 @@
 - **Find in terminal** from the terminal context menu, with next/previous navigation and a match counter.
 - **Prompt navigation** from `Previous prompt` / `Next prompt` in the terminal context menu, or
   `Ctrl+Alt+PageUp` / `Ctrl+Alt+PageDown`, for shells that emit OSC 133 prompt markers.
+  The pinned upstream integrations are installed under `$PREFIX/share/ghostty/shell-integration`.
+  Bash and Zsh source them directly from `$PREFIX/etc/bash.bashrc` and `$PREFIX/etc/zshrc`;
+  Fish uses `$PREFIX/etc/fish/conf.d`, and Nushell uses its system vendor autoload directory and native
+  OSC 133 support. Elvish's module is installed under `$PREFIX/share/elvish/lib`; run
+  `use ghostty-integration` in Elvish to activate it, as required by upstream. HOME configuration files
+  are never edited. Restart the app and open a new session after upgrading or installing a new shell.
+  Existing history without prompt markers cannot be navigated retroactively. Shell options that disable
+  system rc files, or user themes that replace integration hooks, can disable prompt reporting.
 - **OSC 52 clipboard** with multi-MIME read and write, an explicit permission prompt (allow once / always allow /
   deny) and a 64 MiB payload limit.
 - **OSC 7, OSC 9, OSC 777, OSC 9;4 and OSC 22**: working directory reporting, desktop notifications, a progress bar

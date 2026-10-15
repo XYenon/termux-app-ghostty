@@ -70,7 +70,7 @@ public class TermuxApplication extends Application {
         TermuxShellEnvironment.init(this);
 
         if (isTermuxFilesDirectoryAccessible) {
-            GhosttyTerminfoInstaller.installIfNeeded(this);
+            GhosttyResourcesInstaller.installIfNeeded(this);
             TermuxShellEnvironment.writeEnvironmentToFile(this);
         }
     }
