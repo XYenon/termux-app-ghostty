@@ -9,6 +9,8 @@ import android.text.Spanned;
 import android.text.style.URLSpan;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
@@ -81,6 +83,49 @@ public class DialogThemeTest {
         activity.setTheme(R.style.Theme_TermuxActivity_DayNight_NoActionBar);
         activity.getDelegate().installViewFactory();
         checkSearch(activity, "dark-zh-narrow");
+    }
+
+    @Test
+    @Config(sdk = 33)
+    public void searchWindowFitsAboveKeyboard() throws Exception {
+        TermuxActivity activity = Robolectric.buildActivity(TermuxActivity.class).get();
+        activity.setTheme(R.style.Theme_TermuxActivity_DayNight_NoActionBar);
+        activity.getDelegate().installViewFactory();
+        AlertDialog dialog = showSearch(activity, View.VISIBLE);
+        WindowManager.LayoutParams attributes = new WindowManager.LayoutParams();
+        attributes.copyFrom(dialog.getWindow().getAttributes());
+        // Run Android's legacy soft-input-mode conversion, which Robolectric's window manager skips.
+        ReflectionHelpers.callStaticMethod(Class.forName("android.view.ViewRootImpl"),
+            "adjustLayoutParamsForCompatibility",
+            ReflectionHelpers.ClassParameter.from(WindowManager.LayoutParams.class, attributes));
+        assertEquals("Search window must fit the IME as well as the system bars",
+            WindowInsets.Type.systemBars() | WindowInsets.Type.ime(), attributes.getFitInsetsTypes());
+        assertEquals("Search must not leave space for the hidden toolbar", 0,
+            dialog.getWindow().getAttributes().y);
+        dialog.dismiss();
+    }
+
+    @Test
+    public void searchTemporarilyHidesToolbar() {
+        TermuxActivity activity = Robolectric.buildActivity(TermuxActivity.class).get();
+        activity.setTheme(R.style.Theme_TermuxActivity_DayNight_NoActionBar);
+        activity.getDelegate().installViewFactory();
+        for (int visibility : new int[]{View.VISIBLE, View.GONE}) {
+            for (boolean cancel : new boolean[]{false, true}) {
+                AlertDialog dialog = showSearch(activity, visibility);
+                View toolbar = activity.getTerminalToolbarViewPager();
+                assertEquals(View.GONE, toolbar.getVisibility());
+                if (cancel) {
+                    dialog.cancel();
+                } else {
+                    dialog.findViewById(R.id.terminal_search_close).performClick();
+                }
+                ShadowLooper.idleMainLooper();
+                assertFalse(dialog.isShowing());
+                assertEquals("Closing search must restore the toolbar's previous visibility",
+                    visibility, toolbar.getVisibility());
+            }
+        }
     }
 
     private void checkDialog() throws Exception {
@@ -189,17 +234,23 @@ public class DialogThemeTest {
         capture(row, "failed-session-" + mode);
     }
 
-    private static void checkSearch(TermuxActivity activity, String mode) throws Exception {
+    private static AlertDialog showSearch(TermuxActivity activity, int toolbarVisibility) {
+        activity.setContentView(R.layout.activity_termux);
+        activity.getTerminalToolbarViewPager().setVisibility(toolbarVisibility);
         TerminalSession session = new TerminalSession("", "", new String[0], new String[0],
             100, new TermuxTerminalSessionClientBase());
         GhosttyTerminal terminal = Shadow.newInstanceOf(GhosttyTerminal.class);
-        SearchTerminal search = Shadow.extract(terminal);
         ReflectionHelpers.setField(session, "mTerminal", terminal);
         TerminalView terminalView = new TerminalView(activity, null);
         terminalView.mTermSession = session;
         ReflectionHelpers.setField(activity, "mTerminalView", terminalView);
         new TermuxTerminalViewClient(activity, null).showTerminalSearch();
-        AlertDialog dialog = (AlertDialog) ShadowDialog.getLatestDialog();
+        return (AlertDialog) ShadowDialog.getLatestDialog();
+    }
+
+    private static void checkSearch(TermuxActivity activity, String mode) throws Exception {
+        AlertDialog dialog = showSearch(activity, View.VISIBLE);
+        SearchTerminal search = Shadow.extract(activity.getCurrentSession().getTerminal());
         View content = dialog.getWindow().getDecorView();
         EditText input = content.findViewById(R.id.terminal_search_input);
         TextView status = content.findViewById(R.id.terminal_search_status);

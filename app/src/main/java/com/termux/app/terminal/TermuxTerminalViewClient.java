@@ -746,10 +746,13 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         View next = content.findViewById(R.id.terminal_search_next);
 
         AlertDialog dialog = builder.setView(content).create();
+        View toolbar = mActivity.getTerminalToolbarViewPager();
+        int toolbarVisibility = toolbar.getVisibility();
         previous.setOnClickListener(view -> searchTerminal(content, terminal, true));
         next.setOnClickListener(view -> searchTerminal(content, terminal, false));
         content.findViewById(R.id.terminal_search_close).setOnClickListener(view -> dialog.dismiss());
         dialog.setOnDismissListener(ignored -> {
+            toolbar.setVisibility(toolbarVisibility);
             terminal.clearSearch();
             if (mActivity.getCurrentSession() == session)
                 mActivity.getTerminalView().onScreenUpdated(true);
@@ -773,12 +776,16 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             return true;
         });
         input.requestFocus();
+        toolbar.setVisibility(View.GONE);
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
             window.setBackgroundDrawable(new ColorDrawable(MaterialColors.getColor(content,
                 com.google.android.material.R.attr.colorSurface)));
-            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            // The terminal theme's translucent system bars prevent adjustResize from fitting the IME.
+            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND
+                | WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS
+                | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
             window.setGravity(Gravity.BOTTOM);
             window.getDecorView().setPadding(0, 0, 0, 0);
             window.setLayout(WindowManager.LayoutParams.MATCH_PARENT,
