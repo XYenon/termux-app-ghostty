@@ -1,0 +1,31 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="56dp"
+    android:baselineAligned="false"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="8dp"
+    android:paddingEnd="24dp">
+
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/terminal_context_menu_back"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/action_back_to_main_menu"
+        android:padding="12dp"
+        android:src="@drawable/ic_arrow_back" />
+
+    <TextView
+        android:id="@+id/terminal_context_menu_title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="8dp"
+        android:minHeight="48dp"
+        android:gravity="center_vertical"
+        android:includeFontPadding="false"
+        android:paddingVertical="8dp"
+        android:textAppearance="?attr/textAppearanceHeadline6" />
+</LinearLayout>

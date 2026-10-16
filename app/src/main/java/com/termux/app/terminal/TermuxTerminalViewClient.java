@@ -724,8 +724,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             transcriptText, mActivity.getString(R.string.title_share_transcript_with));
     }
 
-    public void shareSelectedText() {
-        String selectedText = mActivity.getTerminalView().getStoredSelectedText();
+    public void shareSelectedText(String selectedText) {
         if (DataUtils.isNullOrEmpty(selectedText)) return;
         ShareUtils.shareText(mActivity, mActivity.getString(R.string.title_share_selected_text),
             selectedText, mActivity.getString(R.string.title_share_selected_text_with));

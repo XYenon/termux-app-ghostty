@@ -92,6 +92,20 @@ public class TermuxActivityRootView extends LinearLayout implements ViewTreeObse
         mActivity = activity;
     }
 
+    @Override
+    public boolean showContextMenuForChild(View originalView) {
+        if (mActivity != null && originalView == mActivity.getTerminalView())
+            return mActivity.showTerminalContextMenu();
+        return super.showContextMenuForChild(originalView);
+    }
+
+    @Override
+    public boolean showContextMenuForChild(View originalView, float x, float y) {
+        if (mActivity != null && originalView == mActivity.getTerminalView())
+            return mActivity.showTerminalContextMenu();
+        return super.showContextMenuForChild(originalView, x, y);
+    }
+
     /**
      * Sets whether root view logging is enabled or not.
      *

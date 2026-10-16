@@ -11,21 +11,25 @@ import android.content.ServiceConnection;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
-import android.view.ContextMenu;
-import android.view.ContextMenu.ContextMenuInfo;
 import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.SubMenu;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.ArrayAdapter;
 import android.widget.EditText;
-import android.widget.ImageButton;
 import android.widget.ListView;
+import android.widget.PopupMenu;
 import android.widget.RelativeLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import com.termux.R;
+import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.termux.app.api.file.FileReceiverActivity;
 import com.termux.app.terminal.TermuxActivityRootView;
@@ -40,7 +44,6 @@ import com.termux.shared.data.DataUtils;
 import com.termux.shared.interact.ShareUtils;
 import com.termux.shared.termux.TermuxConstants;
 import com.termux.shared.termux.TermuxConstants.TERMUX_APP.TERMUX_ACTIVITY;
-import com.termux.app.activities.HelpActivity;
 import com.termux.app.activities.SettingsActivity;
 import com.termux.shared.termux.crash.TermuxCrashUtils;
 import com.termux.shared.termux.settings.preferences.TermuxAppSharedPreferences;
@@ -63,10 +66,12 @@ import com.termux.view.TerminalViewClient;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AlertDialog;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.viewpager.widget.ViewPager;
 
 import java.util.Arrays;
+import java.util.function.Consumer;
 
 /**
  * A terminal emulator activity.
@@ -177,7 +182,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private float mTerminalToolbarDefaultHeight;
 
 
-    private static final int CONTEXT_MENU_SELECT_URL_ID = 0;
+    // Zero is reserved for submenu parents created without an explicit item ID.
+    private static final int CONTEXT_MENU_SELECT_URL_ID = 17;
     private static final int CONTEXT_MENU_SHARE_TRANSCRIPT_ID = 1;
     private static final int CONTEXT_MENU_SHARE_SELECTED_TEXT = 10;
     private static final int CONTEXT_MENU_AUTOFILL_USERNAME = 11;
@@ -189,11 +195,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_AUTOFILL_PASSWORD = 2;
     private static final int CONTEXT_MENU_RESET_TERMINAL_ID = 3;
     private static final int CONTEXT_MENU_KILL_PROCESS_ID = 4;
-    private static final int CONTEXT_MENU_STYLING_ID = 5;
-    private static final int CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON = 6;
-    private static final int CONTEXT_MENU_HELP_ID = 7;
-    private static final int CONTEXT_MENU_SETTINGS_ID = 8;
-    private static final int CONTEXT_MENU_REPORT_ID = 9;
 
     private static final String ARG_TERMINAL_TOOLBAR_TEXT_INPUT = "terminal_toolbar_text_input";
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
@@ -251,7 +252,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         setTerminalToolbarView(savedInstanceState);
 
-        setSettingsButtonView();
+        setDrawerActionsView();
 
         setNewSessionButtonView();
 
@@ -572,10 +573,21 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
 
 
-    private void setSettingsButtonView() {
-        ImageButton settingsButton = findViewById(R.id.settings_button);
-        settingsButton.setOnClickListener(v -> {
+    private void setDrawerActionsView() {
+        View actions = findViewById(R.id.drawer_actions);
+        actions.findViewById(R.id.style_button).setOnClickListener(v -> {
+            getDrawer().closeDrawers();
+            showStylingDialog();
+        });
+        actions.findViewById(R.id.settings_button).setOnClickListener(v -> {
+            getDrawer().closeDrawers();
             ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class));
+        });
+        SwitchMaterial keepScreenOn = actions.findViewById(R.id.keep_screen_on);
+        keepScreenOn.setChecked(mPreferences.shouldKeepScreenOn());
+        keepScreenOn.setOnCheckedChangeListener((button, checked) -> {
+            mTerminalView.setKeepScreenOn(checked);
+            mPreferences.setKeepScreenOn(checked);
         });
     }
 
@@ -635,39 +647,115 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
 
 
-    @Override
-    public void onCreateContextMenu(ContextMenu menu, View v, ContextMenuInfo menuInfo) {
+    public boolean showTerminalContextMenu() {
         TerminalSession currentSession = getCurrentSession();
-        if (currentSession == null) return;
+        if (currentSession == null) return false;
 
+        Menu menu = new PopupMenu(this, mTerminalView).getMenu();
         boolean autoFillEnabled = mTerminalView.isAutoFillEnabled();
         String hyperlink = mTerminalView.getContextHyperlink();
 
-        if (!DataUtils.isNullOrEmpty(hyperlink)) {
-            menu.add(Menu.NONE, CONTEXT_MENU_OPEN_HYPERLINK, Menu.NONE, R.string.action_open_link);
-            menu.add(Menu.NONE, CONTEXT_MENU_COPY_HYPERLINK, Menu.NONE, R.string.action_copy_link);
-        }
         menu.add(Menu.NONE, CONTEXT_MENU_SEARCH_TERMINAL, Menu.NONE,
             R.string.action_find_in_terminal);
         menu.add(Menu.NONE, CONTEXT_MENU_PREVIOUS_PROMPT, Menu.NONE,
             R.string.action_previous_prompt);
         menu.add(Menu.NONE, CONTEXT_MENU_NEXT_PROMPT, Menu.NONE,
             R.string.action_next_prompt);
-        menu.add(Menu.NONE, CONTEXT_MENU_SELECT_URL_ID, Menu.NONE, R.string.action_select_url);
-        menu.add(Menu.NONE, CONTEXT_MENU_SHARE_TRANSCRIPT_ID, Menu.NONE, R.string.action_share_transcript);
-        if (!DataUtils.isNullOrEmpty(mTerminalView.getStoredSelectedText()))
-            menu.add(Menu.NONE, CONTEXT_MENU_SHARE_SELECTED_TEXT, Menu.NONE, R.string.action_share_selected_text);
-        if (autoFillEnabled)
-            menu.add(Menu.NONE, CONTEXT_MENU_AUTOFILL_USERNAME, Menu.NONE, R.string.action_autofill_username);
-        if (autoFillEnabled)
-            menu.add(Menu.NONE, CONTEXT_MENU_AUTOFILL_PASSWORD, Menu.NONE, R.string.action_autofill_password);
-        menu.add(Menu.NONE, CONTEXT_MENU_RESET_TERMINAL_ID, Menu.NONE, R.string.action_reset_terminal);
-        menu.add(Menu.NONE, CONTEXT_MENU_KILL_PROCESS_ID, Menu.NONE, getResources().getString(R.string.action_kill_process, getCurrentSession().getPid())).setEnabled(currentSession.isRunning());
-        menu.add(Menu.NONE, CONTEXT_MENU_STYLING_ID, Menu.NONE, R.string.action_style_terminal);
-        menu.add(Menu.NONE, CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON, Menu.NONE, R.string.action_toggle_keep_screen_on).setCheckable(true).setChecked(mPreferences.shouldKeepScreenOn());
-        menu.add(Menu.NONE, CONTEXT_MENU_HELP_ID, Menu.NONE, R.string.action_open_help);
-        menu.add(Menu.NONE, CONTEXT_MENU_SETTINGS_ID, Menu.NONE, R.string.action_open_settings);
-        menu.add(Menu.NONE, CONTEXT_MENU_REPORT_ID, Menu.NONE, R.string.action_report_issue);
+        Menu links = menu;
+        if (!DataUtils.isNullOrEmpty(hyperlink)) {
+            links = menu.addSubMenu(R.string.action_links);
+            // Keep the original context even if opening a submenu closes the parent menu.
+            links.add(Menu.NONE, CONTEXT_MENU_OPEN_HYPERLINK, Menu.NONE, R.string.action_open_link)
+                .setOnMenuItemClickListener(item -> {
+                    ShareUtils.openUrl(this, hyperlink);
+                    return true;
+                });
+            links.add(Menu.NONE, CONTEXT_MENU_COPY_HYPERLINK, Menu.NONE, R.string.action_copy_link)
+                .setOnMenuItemClickListener(item -> {
+                    ShareUtils.copyTextToClipboard(this, hyperlink,
+                        getString(R.string.msg_link_copied_to_clipboard));
+                    return true;
+                });
+        }
+        links.add(Menu.NONE, CONTEXT_MENU_SELECT_URL_ID, Menu.NONE, R.string.action_select_url);
+        SubMenu share = menu.addSubMenu(R.string.action_share);
+        share.add(Menu.NONE, CONTEXT_MENU_SHARE_TRANSCRIPT_ID, Menu.NONE, R.string.action_share_transcript);
+        String selectedText = mTerminalView.getStoredSelectedText();
+        if (!DataUtils.isNullOrEmpty(selectedText))
+            share.add(Menu.NONE, CONTEXT_MENU_SHARE_SELECTED_TEXT, Menu.NONE, R.string.action_share_selected_text)
+                .setOnMenuItemClickListener(item -> {
+                    mTermuxTerminalViewClient.shareSelectedText(selectedText);
+                    return true;
+                });
+        SubMenu session = menu.addSubMenu(R.string.action_session);
+        session.add(Menu.NONE, CONTEXT_MENU_RESET_TERMINAL_ID, Menu.NONE, R.string.action_reset_terminal);
+        session.add(Menu.NONE, CONTEXT_MENU_KILL_PROCESS_ID, Menu.NONE,
+            getString(R.string.action_kill_process, currentSession.getPid())).setEnabled(currentSession.isRunning());
+        if (autoFillEnabled) {
+            SubMenu autoFill = menu.addSubMenu(R.string.action_autofill);
+            autoFill.add(Menu.NONE, CONTEXT_MENU_AUTOFILL_USERNAME, Menu.NONE, R.string.action_autofill_username);
+            autoFill.add(Menu.NONE, CONTEXT_MENU_AUTOFILL_PASSWORD, Menu.NONE, R.string.action_autofill_password);
+        }
+        showTerminalContextMenu(menu);
+        return true;
+    }
+
+    private void showTerminalContextMenu(Menu menu) {
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this);
+        // AlertDialog supplies the title's layout parameters when attaching it.
+        @SuppressLint("InflateParams")
+        View header = LayoutInflater.from(builder.getContext())
+            .inflate(R.layout.terminal_context_menu_header, null);
+        TextView title = header.findViewById(R.id.terminal_context_menu_title);
+        ArrayAdapter<MenuItem> adapter = new ArrayAdapter<MenuItem>(builder.getContext(),
+            R.layout.terminal_context_menu_item) {
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                TextView row = (TextView) super.getView(position, convertView, parent);
+                MenuItem item = getItem(position);
+                row.setText(item.getTitle());
+                row.setEnabled(item.isEnabled());
+                row.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0,
+                    item.hasSubMenu() ? R.drawable.ic_chevron_right : 0, 0);
+                return row;
+            }
+
+            @Override public boolean areAllItemsEnabled() { return false; }
+            @Override public boolean isEnabled(int position) { return getItem(position).isEnabled(); }
+        };
+        AlertDialog dialog = builder.setCustomTitle(header).setAdapter(adapter, null)
+            .setOnDismissListener(d -> mTerminalView.onContextMenuClosed(menu)).show();
+        ListView list = dialog.getListView();
+        int verticalPadding = (int) ViewUtils.dpToPx(this, 8);
+        list.setPadding(0, verticalPadding, 0, verticalPadding);
+        View titlePanel = (View) header.getParent();
+        // The custom header and list already provide their own vertical spacing.
+        dialog.findViewById(androidx.appcompat.R.id.titleDividerNoCustom).setVisibility(View.GONE);
+        Consumer<Menu> displayMenu = current -> {
+            titlePanel.setVisibility(current == menu ? View.GONE : View.VISIBLE);
+            if (current instanceof SubMenu) title.setText(((SubMenu) current).getItem().getTitle());
+            adapter.setNotifyOnChange(false);
+            adapter.clear();
+            for (int i = 0; i < current.size(); i++) adapter.add(current.getItem(i));
+            adapter.notifyDataSetChanged();
+            list.setSelection(0);
+        };
+        header.findViewById(R.id.terminal_context_menu_back).setOnClickListener(v -> displayMenu.accept(menu));
+        dialog.setOnKeyListener((d, keyCode, event) -> {
+            if (keyCode != KeyEvent.KEYCODE_BACK || titlePanel.getVisibility() != View.VISIBLE) return false;
+            if (event.getAction() == KeyEvent.ACTION_UP) displayMenu.accept(menu);
+            return true;
+        });
+        list.setOnItemClickListener((parent, view, position, id) -> {
+            MenuItem item = adapter.getItem(position);
+            if (item.hasSubMenu()) {
+                displayMenu.accept(item.getSubMenu());
+            } else {
+                dialog.dismiss();
+                if (!menu.performIdentifierAction(item.getItemId(), 0)) onContextItemSelected(item);
+            }
+        });
+        displayMenu.accept(menu);
     }
 
     /** Hook system menu to show context menu instead. */
@@ -682,13 +770,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         TerminalSession session = getCurrentSession();
 
         switch (item.getItemId()) {
-            case CONTEXT_MENU_OPEN_HYPERLINK:
-                ShareUtils.openUrl(this, mTerminalView.getContextHyperlink());
-                return true;
-            case CONTEXT_MENU_COPY_HYPERLINK:
-                ShareUtils.copyTextToClipboard(this, mTerminalView.getContextHyperlink(),
-                    getString(R.string.msg_link_copied_to_clipboard));
-                return true;
             case CONTEXT_MENU_SEARCH_TERMINAL:
                 mTermuxTerminalViewClient.showTerminalSearch();
                 return true;
@@ -704,9 +785,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             case CONTEXT_MENU_SHARE_TRANSCRIPT_ID:
                 mTermuxTerminalViewClient.shareSessionTranscript();
                 return true;
-            case CONTEXT_MENU_SHARE_SELECTED_TEXT:
-                mTermuxTerminalViewClient.shareSelectedText();
-                return true;
             case CONTEXT_MENU_AUTOFILL_USERNAME:
                 mTerminalView.requestAutoFillUsername();
                 return true;
@@ -719,31 +797,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             case CONTEXT_MENU_KILL_PROCESS_ID:
                 showKillSessionDialog(session);
                 return true;
-            case CONTEXT_MENU_STYLING_ID:
-                showStylingDialog();
-                return true;
-            case CONTEXT_MENU_TOGGLE_KEEP_SCREEN_ON:
-                toggleKeepScreenOn();
-                return true;
-            case CONTEXT_MENU_HELP_ID:
-                ActivityUtils.startActivity(this, new Intent(this, HelpActivity.class));
-                return true;
-            case CONTEXT_MENU_SETTINGS_ID:
-                ActivityUtils.startActivity(this, new Intent(this, SettingsActivity.class));
-                return true;
-            case CONTEXT_MENU_REPORT_ID:
-                mTermuxTerminalViewClient.reportIssueFromTranscript();
-                return true;
             default:
                 return super.onContextItemSelected(item);
         }
-    }
-
-    @Override
-    public void onContextMenuClosed(Menu menu) {
-        super.onContextMenuClosed(menu);
-        // onContextMenuClosed() is triggered twice if back button is pressed to dismiss instead of tap for some reason
-        mTerminalView.onContextMenuClosed(menu);
     }
 
     private void showKillSessionDialog(TerminalSession session) {
@@ -782,15 +838,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 .setPositiveButton(R.string.action_styling_install,
                     (dialog, which) -> ActivityUtils.startActivity(this, new Intent(Intent.ACTION_VIEW, Uri.parse(TermuxConstants.TERMUX_STYLING_FDROID_PACKAGE_URL))))
                 .setNegativeButton(android.R.string.cancel, null).show();
-        }
-    }
-    private void toggleKeepScreenOn() {
-        if (mTerminalView.getKeepScreenOn()) {
-            mTerminalView.setKeepScreenOn(false);
-            mPreferences.setKeepScreenOn(false);
-        } else {
-            mTerminalView.setKeepScreenOn(true);
-            mPreferences.setKeepScreenOn(true);
         }
     }
 

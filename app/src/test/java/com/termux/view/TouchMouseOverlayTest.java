@@ -3,6 +3,9 @@ package com.termux.view;
 import static org.junit.Assert.*;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.view.ActionMode;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -15,6 +18,8 @@ import android.widget.FrameLayout;
 import android.widget.PopupMenu;
 
 import com.termux.terminal.GhosttyTerminal;
+import com.termux.terminal.TerminalSession;
+import com.termux.shared.termux.terminal.TermuxTerminalSessionClientBase;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -38,12 +43,16 @@ public class TouchMouseOverlayTest {
     private TouchMouseDragHandler handler;
     private TouchMouseOverlay overlay;
     private ToolbarHost host;
+    private TerminalView view;
+    private ClipboardManager clipboard;
 
     @Before
     public void setUp() {
         Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
         host = new ToolbarHost(activity);
-        TerminalView view = new TerminalView(activity, null);
+        view = new TerminalView(activity, null);
+        clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+        clipboard.setPrimaryClip(ClipData.newPlainText("", "clipboard text"));
         host.addView(view);
         activity.setContentView(host);
         handler = new TouchMouseDragHandler((event, action) -> actions.add(action));
@@ -59,8 +68,35 @@ public class TouchMouseOverlayTest {
         overlay.update();
         assertNotNull(host.mode);
         assertEquals(ActionMode.TYPE_FLOATING, host.type);
-        assertEquals(3, host.mode.getMenu().size());
+        assertEquals(4, host.mode.getMenu().size());
+        assertEquals(4, host.mode.getMenu().getItem(1).getItemId());
         assertTrue(actions.isEmpty());
+    }
+
+    @Test
+    public void pasteUsesClipboardAndClosesAimWithoutMouseEvents() {
+        StringBuilder pasted = new StringBuilder();
+        view.mTermSession = new TerminalSession("", "", new String[0], new String[0],
+            100, new TermuxTerminalSessionClientBase() {
+                @Override public void onPasteTextFromClipboard(TerminalSession session) {
+                    assertFalse(handler.isActive());
+                    assertTrue(host.mode.finished);
+                    pasted.append(clipboard.getPrimaryClip().getItemAt(0).getText());
+                }
+            });
+        assertTrue(host.mode.getMenu().findItem(4).isEnabled());
+        host.choose(4);
+        assertEquals("clipboard text", pasted.toString());
+        assertTrue(actions.isEmpty());
+        assertFalse(host.contextMenuOpened);
+    }
+
+    @Test
+    public void pasteIsDisabledWhenClipboardIsEmpty() {
+        clipboard.clearPrimaryClip();
+        Menu menu = new PopupMenu(host.getContext(), host).getMenu();
+        host.mode.callback.onCreateActionMode(host.mode, menu);
+        assertFalse(menu.findItem(4).isEnabled());
     }
 
     @Test

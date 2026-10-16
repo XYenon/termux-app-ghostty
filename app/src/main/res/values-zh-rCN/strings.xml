@@ -47,6 +47,11 @@
     <string name="action_toggle_soft_keyboard">键盘</string>
     <string name="msg_enabling_terminal_toolbar">正在启用终端工具栏</string>
     <string name="msg_disabling_terminal_toolbar">正在禁用终端工具栏</string>
+    <string name="action_links">链接</string>
+    <string name="action_share">分享</string>
+    <string name="action_session">会话</string>
+    <string name="action_autofill">自动填充</string>
+    <string name="action_back_to_main_menu">返回主菜单</string>
     <string name="action_find_in_terminal">在终端中查找</string>
     <string name="action_previous_prompt">上一个提示符</string>
     <string name="action_next_prompt">下一个提示符</string>
@@ -83,9 +88,7 @@
     <string name="title_confirm_kill_process">确定要终止此会话吗？</string>
     <string name="action_style_terminal">样式</string>
     <string name="action_toggle_keep_screen_on">保持屏幕常亮</string>
-    <string name="action_open_help">帮助</string>
     <string name="action_open_settings">设置</string>
-    <string name="action_report_issue">报告问题</string>
     <string name="msg_generating_report">正在生成报告</string>
     <string name="msg_add_termux_debug_info">是否在报告中添加 Termux 调试信息？</string>
     <string name="error_styling_not_installed">未安装 &TERMUX_STYLING_APP_NAME; 插件应用。</string>

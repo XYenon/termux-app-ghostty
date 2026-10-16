@@ -1,5 +1,7 @@
 package com.termux.view;
 
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
@@ -65,11 +67,15 @@ final class TouchMouseOverlay {
             mActionMode = mView.startActionMode(new ActionMode.Callback2() {
                 @Override
                 public boolean onCreateActionMode(ActionMode mode, Menu menu) {
+                    ClipboardManager clipboard = (ClipboardManager) mView.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
                     menu.add(Menu.NONE, 1, 0, R.string.mouse_aim_click)
                         .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
-                    menu.add(Menu.NONE, 2, 1, R.string.text_selection_more)
+                    menu.add(Menu.NONE, 4, 1, R.string.paste_text)
+                        .setEnabled(clipboard != null && clipboard.hasPrimaryClip())
                         .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
-                    menu.add(Menu.NONE, 3, 2, android.R.string.cancel)
+                    menu.add(Menu.NONE, 2, 2, R.string.text_selection_more)
+                        .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+                    menu.add(Menu.NONE, 3, 3, android.R.string.cancel)
                         .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
                     return true;
                 }
@@ -82,6 +88,7 @@ final class TouchMouseOverlay {
                     if (item.getItemId() == 1) mHandler.click();
                     else mHandler.cancel();
                     update();
+                    if (item.getItemId() == 4) mView.mTermSession.onPasteTextFromClipboard();
                     if (item.getItemId() == 2) mView.showContextMenu();
                     return true;
                 }
