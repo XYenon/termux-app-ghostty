@@ -102,7 +102,7 @@
   `POST_NOTIFICATIONS` permission.
 - APKs are built by the `Build` workflow on the `ghostty` branch for all five ABIs (debug and release, with SHA-256
   manifests) and can be downloaded from its workflow artifacts or from the assets attached to a release. They are test
-  builds: the debug APKs use the shared test key that upstream also publishes; JitPack library builds use Zig 0.16 and
+  builds: the debug APKs use the shared test key that upstream also publishes; JitPack library builds use Zig 0.17 and
   NDK 29.
 - [`docs/ghostty-upstream.md`](docs/ghostty-upstream.md) records every Ghostty sync and what was intentionally not
   adapted.

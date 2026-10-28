@@ -127,6 +127,7 @@ struct KittyDrawPlacement {
     uint32_t source_width;
     uint32_t source_height;
     int32_t z;
+    GhosttyRenderStateImageLayer layer;
 };
 
 struct CursorFrameState {
@@ -218,12 +219,11 @@ struct TermuxVulkanRenderer {
     FontSystem fonts;
     uint64_t glyph_generation = 0;
     uint64_t kitty_generation = 0;
+    uint64_t kitty_placements_generation = 0;
     std::map<uint32_t, CachedGlyph> glyphs;
     std::vector<RenderCell> render_cells;
-    // Visible Kitty placements, sorted once per composed frame for all layers.
+    // Visible Kitty placements, cached until RenderState reports a change.
     std::vector<KittyDrawPlacement> kitty_placements;
-    std::vector<GhosttyKittyGraphicsVirtualPlacementRenderInfo>
-        kitty_virtual_placements;
     bool kitty_frame_has_placements = false;
     std::vector<uint8_t> frame;
     uint32_t frame_width = 0;
@@ -1308,132 +1308,77 @@ static_assert(kitty_destination_coordinate(INT32_MIN, UINT32_MAX, 0) < 0);
 static_assert(kitty_destination_coordinate(
     INT32_MAX, UINT32_MAX, UINT32_MAX) > INT32_MAX);
 
-bool kitty_placement_in_layer(int32_t z, GhosttyKittyPlacementLayer layer) {
-    constexpr int32_t kBackgroundLimit = INT32_MIN / 2;
-    switch (layer) {
-        case GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG:
-            return z < kBackgroundLimit;
-        case GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT:
-            return z >= kBackgroundLimit && z < 0;
-        case GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT:
-            return z >= 0;
-        case GHOSTTY_KITTY_PLACEMENT_LAYER_ALL:
-            return true;
-        default:
-            return false;
-    }
-}
-
-// Collects every visible pin and virtual placement once per composed frame.
-// Pin placements precede virtual ones before the stable z/image sort, so
-// filtering the result by layer keeps the per-layer draw order unchanged.
-void collect_kitty_placements(TermuxVulkanRenderer *renderer,
-                              GhosttyKittyGraphics graphics) {
+// RenderState resolves fixed, Unicode placeholder and relative placements,
+// including clipping and parent chains, using the same captured text rows.
+bool collect_kitty_placements(TermuxVulkanRenderer *renderer) {
     std::vector<KittyDrawPlacement> &placements = renderer->kitty_placements;
     placements.clear();
-    GhosttyTerminal terminal = renderer->engine->terminal;
-    GhosttyKittyGraphicsPlacementIterator iterator = nullptr;
-    if (ghostty_kitty_graphics_placement_iterator_new(nullptr, &iterator) ==
-        GHOSTTY_SUCCESS) {
-        if (ghostty_kitty_graphics_get(
-                graphics, GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
-                &iterator) == GHOSTTY_SUCCESS) {
-            while (ghostty_kitty_graphics_placement_next(iterator)) {
-                uint32_t image_id = 0;
-                bool is_virtual = false;
-                uint32_t offset_x = 0;
-                uint32_t offset_y = 0;
-                int32_t z = 0;
-                ghostty_kitty_graphics_placement_get(
-                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
-                    &image_id);
-                ghostty_kitty_graphics_placement_get(
-                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL,
-                    &is_virtual);
-                if (is_virtual) continue;
-                GhosttyKittyGraphicsImage image =
-                    ghostty_kitty_graphics_image(graphics, image_id);
-                if (!image) continue;
-                ghostty_kitty_graphics_image_get(
-                    image, GHOSTTY_KITTY_IMAGE_DATA_ID, &image_id);
-                ghostty_kitty_graphics_placement_get(
-                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET,
-                    &offset_x);
-                ghostty_kitty_graphics_placement_get(
-                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET,
-                    &offset_y);
-                ghostty_kitty_graphics_placement_get(
-                    iterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z, &z);
-                GhosttyKittyGraphicsPlacementRenderInfo info{};
-                info.size = sizeof(info);
-                if (ghostty_kitty_graphics_placement_render_info(
-                        iterator, image, terminal, &info) != GHOSTTY_SUCCESS ||
-                    !info.viewport_visible || info.pixel_width == 0 ||
-                    info.pixel_height == 0) continue;
-
-                placements.push_back({
-                    image_id,
-                    kitty_destination_coordinate(
-                        info.viewport_col, renderer->fonts.cell_width,
-                        offset_x),
-                    kitty_destination_coordinate(
-                        info.viewport_row, renderer->fonts.cell_height,
-                        offset_y),
-                    info.pixel_width, info.pixel_height, info.source_x,
-                    info.source_y, info.source_width, info.source_height, z,
-                });
-            }
-        }
-        ghostty_kitty_graphics_placement_iterator_free(iterator);
-    }
-
-    size_t count = 0;
-    GhosttyResult result = ghostty_kitty_graphics_virtual_placements(
-        terminal, nullptr, 0, &count);
-    if (count > 0 &&
-        (result == GHOSTTY_SUCCESS || result == GHOSTTY_OUT_OF_SPACE)) {
-        auto &virtuals = renderer->kitty_virtual_placements;
-        virtuals.resize(count);
-        for (auto &placement : virtuals) placement.size = sizeof(placement);
-        if (ghostty_kitty_graphics_virtual_placements(
-                terminal, virtuals.data(), virtuals.size(), &count) ==
-            GHOSTTY_SUCCESS) {
-            for (size_t i = 0; i < std::min(count, virtuals.size()); ++i) {
-                const auto &placement = virtuals[i];
-                placements.push_back({
-                    placement.image_id,
-                    kitty_destination_coordinate(
-                        placement.viewport_col, renderer->fonts.cell_width,
-                        placement.offset_x),
-                    kitty_destination_coordinate(
-                        placement.viewport_row, renderer->fonts.cell_height,
-                        placement.offset_y),
-                    placement.pixel_width,
-                    placement.pixel_height,
-                    placement.source_x,
-                    placement.source_y,
-                    placement.source_width,
-                    placement.source_height,
-                    placement.z,
-                });
-            }
-        }
+    GhosttyRenderStateImageIterator iterator = nullptr;
+    if (ghostty_render_state_image_iterator_new(nullptr, &iterator) !=
+        GHOSTTY_SUCCESS) return false;
+    struct IteratorGuard {
+        GhosttyRenderStateImageIterator value;
+        ~IteratorGuard() { ghostty_render_state_image_iterator_free(value); }
+    } guard{iterator};
+    if (ghostty_render_state_get(
+            renderer->engine->render_state,
+            GHOSTTY_RENDER_STATE_DATA_IMAGE_ITERATOR, &iterator) !=
+        GHOSTTY_SUCCESS) return false;
+    while (ghostty_render_state_image_iterator_next(iterator)) {
+        KittyDrawPlacement placement{};
+        GhosttyImageProtocol protocol;
+        int32_t col = 0, row = 0;
+        uint32_t offset_x = 0, offset_y = 0;
+        const GhosttyRenderStateImageData keys[] = {
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_PROTOCOL,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_IMAGE_ID,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_LAYER,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_Z,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_VIEWPORT_COL,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_VIEWPORT_ROW,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_CELL_OFFSET_X,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_CELL_OFFSET_Y,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_PIXEL_WIDTH,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_PIXEL_HEIGHT,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_SOURCE_X,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_SOURCE_Y,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_SOURCE_WIDTH,
+            GHOSTTY_RENDER_STATE_IMAGE_DATA_SOURCE_HEIGHT,
+        };
+        void *values[] = {
+            &protocol, &placement.image_id, &placement.layer, &placement.z,
+            &col, &row, &offset_x, &offset_y,
+            &placement.pixel_width, &placement.pixel_height,
+            &placement.source_x, &placement.source_y,
+            &placement.source_width, &placement.source_height,
+        };
+        if (ghostty_render_state_image_get_multi(
+                iterator, sizeof(keys) / sizeof(keys[0]), keys, values,
+                nullptr) != GHOSTTY_SUCCESS) return false;
+        if (protocol != GHOSTTY_IMAGE_PROTOCOL_KITTY) continue;
+        placement.destination_x = kitty_destination_coordinate(
+            col, renderer->fonts.cell_width, offset_x);
+        placement.destination_y = kitty_destination_coordinate(
+            row, renderer->fonts.cell_height, offset_y);
+        placements.push_back(placement);
     }
 
     std::stable_sort(
         placements.begin(), placements.end(),
         [](const KittyDrawPlacement &left,
            const KittyDrawPlacement &right) {
-            return left.z < right.z ||
-                (left.z == right.z && left.image_id < right.image_id);
+            if (left.layer != right.layer) return left.layer < right.layer;
+            if (left.z != right.z) return left.z < right.z;
+            return left.image_id < right.image_id;
         });
+    return true;
 }
 
 void draw_kitty_layer(TermuxVulkanRenderer *renderer,
                       GhosttyKittyGraphics graphics,
-                      GhosttyKittyPlacementLayer layer) {
+                      GhosttyRenderStateImageLayer layer) {
     for (const auto &placement : renderer->kitty_placements) {
-        if (!kitty_placement_in_layer(placement.z, layer)) continue;
+        if (placement.layer != layer) continue;
         draw_kitty_image(
             renderer, graphics, placement.image_id, placement.destination_x,
             placement.destination_y, placement.pixel_width,
@@ -1520,8 +1465,15 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
     uint64_t kitty_generation = 0;
     bool kitty_generation_available = get_kitty_graphics(
         renderer, &kitty_graphics_handle, &kitty_generation);
+    uint64_t kitty_placements_generation = 0;
+    ghostty_render_state_get(
+        engine->render_state,
+        GHOSTTY_RENDER_STATE_DATA_IMAGE_PLACEMENTS_GENERATION,
+        &kitty_placements_generation);
     bool kitty_changed = kitty_generation_available &&
         kitty_generation != renderer->kitty_generation;
+    bool kitty_placements_changed = kitty_placements_generation !=
+        renderer->kitty_placements_generation;
 
     bool terminal_cursor_visible = false;
     bool cursor_has_position = false;
@@ -1559,6 +1511,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
     bool changed = renderer->frame_pending_upload ||
         !renderer->frame_initialized || dimensions_changed ||
         cursor_changed || glyphs_changed || kitty_changed ||
+        kitty_placements_changed ||
         dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE;
     renderer->pending_cols = cols;
     renderer->pending_rows = rows;
@@ -1567,11 +1520,13 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
         return true;
     }
 
-    // Collect placements once for all three layers.
-    if (kitty_generation_available && kitty_generation != 0) {
-        collect_kitty_placements(renderer, kitty_graphics_handle);
-    } else {
-        renderer->kitty_placements.clear();
+    if (!renderer->frame_initialized || dimensions_changed ||
+        kitty_placements_changed) {
+        if (!collect_kitty_placements(renderer)) {
+            *error = "Could not obtain Ghostty image placements";
+            return false;
+        }
+        renderer->kitty_placements_generation = kitty_placements_generation;
     }
     const bool kitty_graphics =
         kitty_graphics_handle && !renderer->kitty_placements.empty();
@@ -1579,8 +1534,8 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
     // is visible, when the previous frame had one, or when the image
     // generation changed and stale pixels must be cleared.
     bool full_redraw = !renderer->frame_initialized || dimensions_changed ||
-        glyphs_changed || kitty_changed || kitty_graphics ||
-        renderer->kitty_frame_has_placements ||
+        glyphs_changed || kitty_changed || kitty_placements_changed ||
+        kitty_graphics || renderer->kitty_frame_has_placements ||
         dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL;
     ghostty_render_state_get(engine->render_state,
                              GHOSTTY_RENDER_STATE_DATA_COLORS, &colors);
@@ -1593,7 +1548,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
                         renderer->extent.height, colors.background);
         if (kitty_graphics)
             draw_kitty_layer(renderer, kitty_graphics_handle,
-                             GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
+                             GHOSTTY_RENDER_STATE_IMAGE_LAYER_BELOW_BACKGROUND);
         fill_frame_rect(renderer, 0, 0, cols * renderer->fonts.cell_width,
                         rows * renderer->fonts.cell_height, colors.background);
     }
@@ -1718,7 +1673,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
 
     if (kitty_graphics)
         draw_kitty_layer(renderer, kitty_graphics_handle,
-                         GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
+                         GHOSTTY_RENDER_STATE_IMAGE_LAYER_BELOW_TEXT);
 
     for (const auto &cell : renderer->render_cells) {
         draw_cell_content(renderer, cell, use_glyphs, cell.foreground);
@@ -1726,7 +1681,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
 
     if (kitty_graphics)
         draw_kitty_layer(renderer, kitty_graphics_handle,
-                         GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
+                         GHOSTTY_RENDER_STATE_IMAGE_LAYER_ABOVE_TEXT);
 
     if (current_cursor.drawn) {
         GhosttyColorRgb cursor_color =

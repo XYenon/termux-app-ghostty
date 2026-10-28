@@ -1769,12 +1769,18 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeTickKittyGraphicsAnimations(
     JNIEnv *, jclass, jlong handle, jlong now_millis) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
-    uint64_t delay = 0;
+    uint64_t next_millis = 0;
+    const uint64_t now = static_cast<uint64_t>(std::max<jlong>(0, now_millis));
     ScopedEngineLock lock(engine);
+    GhosttyKittyGraphics graphics = nullptr;
+    if (ghostty_terminal_get(engine->terminal,
+                             GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS,
+                             &graphics) != GHOSTTY_SUCCESS || !graphics)
+        return -1;
+    // Upstream returns an absolute deadline; the view schedules a delay.
     GhosttyResult result = ghostty_kitty_graphics_animation_tick(
-        engine->terminal, static_cast<uint64_t>(std::max<jlong>(0, now_millis)),
-        &delay);
-    return result == GHOSTTY_SUCCESS ? static_cast<jlong>(delay) : -1;
+        graphics, now, &next_millis);
+    return result == GHOSTTY_SUCCESS ? static_cast<jlong>(next_millis - now) : -1;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

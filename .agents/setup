@@ -5,7 +5,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 android_sdk_root="$HOME/.local/share/android-sdk"
 java_home="$HOME/.local/share/jdks/temurin-11"
-zig_home="$HOME/.local/share/zig/0.16.0"
+zig_home="$HOME/.local/share/zig/0.17.0"
 setup_started=$SECONDS
 step_started=$SECONDS
 step_name=""
@@ -59,10 +59,10 @@ if [[ ! -x "$java_home/bin/java" ]]; then
     tar -xzf "$tmp_dir/java.tar.gz" --strip-components=1 -C "$java_home"
 fi
 
-step "Installing Zig 0.16.0"
+step "Installing Zig 0.17.0"
 if [[ ! -x "$zig_home/zig" ]]; then
     curl --fail --location --retry 3 \
-        "https://ziglang.org/download/0.16.0/zig-$zig_arch-linux-0.16.0.tar.xz" \
+        "https://ziglang.org/download/0.17.0/zig-$zig_arch-linux-0.17.0.tar.xz" \
         --output "$tmp_dir/zig.tar.xz"
     mkdir -p "$zig_home"
     tar -xJf "$tmp_dir/zig.tar.xz" --strip-components=1 -C "$zig_home"

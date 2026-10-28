@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      ZIG_VERSION: 0.16.0
+      ZIG_VERSION: 0.17.0
       ANDROID_NDK_VERSION: 29.0.14206865
       ANDROID_CMAKE_VERSION: 3.22.1
 

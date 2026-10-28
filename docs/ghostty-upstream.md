@@ -8,6 +8,127 @@ applies `native/patches/ghostty-android.patch`, and builds `libghostty-vt` for
 the configured Android ABIs. Keep the patch limited to C APIs needed by the
 Android JNI and Vulkan renderer.
 
+## 2026-10-27 sync
+
+The immutable pin moved from `22fa134a07f5749edd9e92c6bc17d8aaf61843be` to
+`4a4fc017940bec38c93b278c10c6a18c591f3e63` (1.4.1-dev), the upstream `main`
+HEAD queried at the start of this sync. The range contains 212 commits,
+including merges, and a 478-file net diff (24,935 insertions, 5,883 deletions).
+The commit range and source changes were reviewed, separating the Zig 0.17
+mechanical migration from terminal behavior, C API contracts, shell scripts,
+snapshot serialization and desktop-runtime changes
+([upstream comparison](https://github.com/ghostty-org/ghostty/compare/22fa134a07f5749edd9e92c6bc17d8aaf61843be...4a4fc017940bec38c93b278c10c6a18c591f3e63)).
+
+Android adaptations:
+
+- The native build, Gradle version check, CI, JitPack and orb Zig installation
+  now require Zig 0.17.0. Its optimize option is `fast` instead of `ReleaseFast`.
+  The upstream Android NDK package supplies the expanded libc configuration
+  required by Zig 0.17. Android API 29, NDK 29 and the four ABIs are retained.
+- Official `ghostty_kitty_graphics_animation_tick` replaces the custom patch
+  export. JNI obtains the active screen's image-storage handle under the
+  existing native lock and converts the upstream absolute next-frame deadline
+  into the delay expected by the Java scheduler. Stopped or absent animations
+  still return no scheduled wakeup.
+- The Vulkan renderer now reads every fixed, Unicode-placeholder and relative
+  Kitty placement through the official RenderState image iterator. This keeps
+  placement geometry and text rows in the same captured state, including
+  virtual-parent chains, source rectangles, offsets, negative viewport rows
+  and the three composition layers. It sorts by layer, z and image ID and
+  caches the list until the placement generation or dimensions change.
+  Placement-only changes force repainting even when text cells stay clean.
+  The redundant custom virtual-placement API and animation patch are removed.
+- The smaller Android patch retains glyph introspection, contour/point access,
+  registration/reset generation and cell-width overrides, the terminal I/O
+  accessor, and the explicit `usize` cast in the 32-bit page-alignment check.
+  Its enum conversions use Zig 0.17's backing-integer builtins.
+- Existing OSC 7501 support replies, inherited app resolution, session-owned
+  records, ordered events outside the native lock, UI, subtree clear, bounded
+  storage, prompt/exit cleanup, dismissal and RIS/reset behavior remain in
+  place. Upstream now rejects malformed IDs before invoking the callback;
+  an invalid ID cannot accidentally update the root record.
+- Updated Bash/Zsh resources remove control bytes from reported hostnames and
+  working directories; Zsh also prints directory backslashes literally. This
+  prevents directory names from injecting OSC commands. Bash, Zsh, Fish,
+  Nushell and Elvish resources still install under `$PREFIX/share/ghostty`.
+  Bash/Zsh use their existing system rc files, Fish its native conf.d, and Nu
+  its vendor autoload path. No HOME files or invented rc-directory mechanism
+  are introduced. Elvish still requires `use ghostty-integration`, as it has
+  no global autoload entry point. Prompt navigation and custom ZDOTDIR work
+  with the new library; existing unmarked history cannot gain prompt marks.
+
+The pin also brings left-margin bounds for CUB/BS, origin-relative
+CHA/VPA/HPR/VPR, VT formatter preservation of erased backgrounds and trailing
+blank rows, discarded cancelled/aborted APC commands, C1 continuation restart,
+stable Kitty transmissions and pending animation frames, removal of image
+placements from erased history, garbage tracking for erased pins, bounded page
+row calculations and cursor style/hyperlink lifetime after history pruning.
+These run in the existing lib-vt parser, formatter and render consumers.
+
+Reviewed changes that need no new Android integration:
+
+- `vt_write_until` replaces `vt_write_until_ground` and can stop at APC/DCS/OSC
+  boundaries. Termux consumes complete PTY chunks with `vt_write`; it has no
+  proxy/interceptor consumer of the removed entry point. Adding a second parse
+  path would provide no current app behavior.
+- Binary snapshots can now carry Kitty storage, fixed/virtual/relative
+  placements, animation frames, loading state and raw pixel payloads. Optional
+  unknown records are skipped with CRC validation. These library capabilities
+  are inherited and tested upstream; Termux currently has no binary-snapshot
+  persistence consumer or UI to connect. No app persistence feature is added.
+- GTK's new OSC 5522 multi-MIME clipboard handling, consent previews and grants
+  belong to its GDK/GTK runtime. Android already implements that C callback
+  contract with its own MIME/content-provider handling, permission UI, session
+  grants and limits. Copying GTK code would duplicate that integration.
+- Kitty POSIX shared-memory name normalization remains unavailable on Android,
+  where the existing transport policy deliberately disables shared memory.
+  Direct/file transports and their existing limits remain in place.
+- GTK split minimums/ratios/focus, IME positioning, progress animation and
+  OpenURI activation tokens, macOS AppleScript title overrides/tab movement/
+  split zoom/pasteboard tests, desktop initialization cleanup and termio
+  mailbox changes have no lib-vt/Android runtime consumer. Termux uses its own
+  session, PTY, input and Vulkan ownership. FreeBSD memory/IO fixes, Linux
+  launcher paths, pkg-config distribution, Nix/Apple SDK/desktop build changes,
+  benchmarks, CI, themes, translations and contributor metadata need no host
+  adaptation. Tmux layout validation is inherited by the library but does not
+  introduce a new Termux control-mode UI.
+
+Validation:
+
+- A forced Gradle run of `prepareNativeSources`, `buildGhosttyAndroid`,
+  `buildGhosttyTerminfo`, `test`, `assembleDebug` and `lint` completed with
+  `BUILD SUCCESSFUL` (217 executed tasks). Native/JNI compilation covered
+  arm64-v8a, armeabi-v7a, x86 and x86_64. The 420 debug/release Java test
+  executions had zero failures, errors or skips; all four modules reported
+  zero lint issues.
+- The patched upstream `zig build test-lib-vt -Demit-lib-vt=true
+  -Doptimize=debug -j2 --summary all` passed all 45 build steps: 6,943 tests
+  passed, 74 skipped and zero failed. An initial run under `/tmp` failed the
+  same temporary-file prefix assertion in both suites because the fixture's
+  outside directory was itself inside the deliberately allowed `/tmp` root.
+  Moving only `.zig-cache/tmp` to a directory outside `/tmp` made the complete
+  unchanged suite pass; no source/test changes or ignored failures were used.
+  Forward/reverse patch checks and `git diff --check` also passed.
+- A host fixture linked the patched library and exercised the Android
+  renderer's actual placement collection and pixel composition functions:
+  fixed/virtual/relative placements, virtual parents, asymmetric source crops,
+  negative viewport clipping, scroll/no-op generations, erased history,
+  animation deadlines/pixels/stop, glyph contours/constraints/two-cell widths/
+  reset, malformed OSC 7501 IDs and RIS passed. The inspected fixture images
+  are host CPU output, not captures from an Android Vulkan device.
+- Real PTY sessions with Bash, Zsh, Fish, Nushell and Elvish generated OSC 133
+  marks and moved the library viewport backwards and forwards between prompts.
+  Custom ZDOTDIR passed, all user rc bytes stayed unchanged, and an
+  unintegrated Zsh control produced no marks or navigation movement.
+- All four ABI APKs and the universal APK passed ZIP integrity, exact ABI and
+  native-library membership, ELF/JNI/glyph/official Kitty symbol checks,
+  16 KiB LOAD alignment, pinned terminfo and nine shell-resource/loader byte
+  comparisons, and APK v2 signature verification. `infocmp` read the generated
+  xterm-ghostty entry. The arm64 APK is 45,462,279 bytes with SHA-256
+  `6ccf41b64217ad498a3861f4584fed4bc944749a6ec3664428575894c57f7fe4`.
+- No Android device was connected. Device PTY/JNI execution, actual Vulkan
+  presentation and touch/keyboard interactions remain unverified on hardware.
+
 ## 2026-10-16 sync
 
 The pin moved from `7ec9e26a29399b30ef78f06985fc75045b3cecb6` to

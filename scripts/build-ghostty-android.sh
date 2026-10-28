@@ -60,7 +60,7 @@ for android_abi in "${requested_abis[@]}"; do
             --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
             -Demit-lib-vt=true \
             -Dtarget="$zig_target.$ANDROID_API_LEVEL" \
-            -Doptimize=ReleaseFast \
+            -Doptimize=fast \
             -Dstrip=true \
             -j"$build_jobs"
     )
