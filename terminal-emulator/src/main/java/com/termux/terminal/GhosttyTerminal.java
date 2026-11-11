@@ -441,10 +441,10 @@ public final class GhosttyTerminal implements AutoCloseable {
     }
 
     @Nullable
-    public synchronized int[] selectWordOrOutput(int column, int viewportRow) {
+    public synchronized int[] selectWord(int column, int viewportRow) {
         long handle = getHandleIfOpen();
         return handle == 0
-            ? null : nativeSelectWordOrOutput(handle, column, viewportRow);
+            ? null : nativeSelectWord(handle, column, viewportRow);
     }
 
     @Nullable
@@ -641,9 +641,9 @@ public final class GhosttyTerminal implements AutoCloseable {
     private static native long nativeTickKittyGraphicsAnimations(
         long handle, long nowMillis);
     private static native void nativeDetachSurface(long handle);
-    private static native int[] nativeSelectWordOrOutput(long handle,
-                                                         int column,
-                                                         int viewportRow);
+    private static native int[] nativeSelectWord(long handle,
+                                                  int column,
+                                                  int viewportRow);
     private static native byte[] nativeGetWordAt(long handle, int column,
                                                  int viewportRow);
     private static native boolean nativeSetSelection(long handle,

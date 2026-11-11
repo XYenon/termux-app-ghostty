@@ -12,6 +12,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.text.Editable;
 import android.text.InputType;
+import android.text.Selection;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.ActionMode;
@@ -33,6 +34,7 @@ import android.view.autofill.AutofillValue;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Scroller;
 import android.view.SurfaceView;
 
@@ -463,16 +465,97 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
         // Note that IME_ACTION_NONE cannot be used as that makes it impossible to input newlines using the on-screen
         // keyboard on Android TV (see https://github.com/termux/termux-app/issues/221).
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN;
+        outAttrs.initialSelStart = outAttrs.initialSelEnd = 0;
 
         return new BaseInputConnection(this, true) {
+
+            private int mBatchDepth;
+            // The editable contains only preedit. Keep the IME's committed-text position
+            // separately, since terminal text is owned by the application running in the PTY.
+            private int mCommittedCursor;
+
+            @Override
+            public boolean beginBatchEdit() {
+                mBatchDepth++;
+                return true;
+            }
+
+            @Override
+            public boolean endBatchEdit() {
+                if (mBatchDepth > 0) mBatchDepth--;
+                updateImeSelection();
+                return mBatchDepth > 0;
+            }
+
+            private void updateImeSelection() {
+                if (mBatchDepth > 0) return;
+                Editable content = getEditable();
+                InputMethodManager manager = (InputMethodManager)
+                    getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+                int composingStart = getComposingSpanStart(content);
+                int composingEnd = getComposingSpanEnd(content);
+                manager.updateSelection(TerminalView.this,
+                    mCommittedCursor + Selection.getSelectionStart(content),
+                    mCommittedCursor + Selection.getSelectionEnd(content),
+                    composingStart < 0 ? -1 : mCommittedCursor + composingStart,
+                    composingEnd < 0 ? -1 : mCommittedCursor + composingEnd);
+            }
+
+            @Override
+            public boolean setComposingText(CharSequence text, int newCursorPosition) {
+                boolean result = super.setComposingText(text, newCursorPosition);
+                updateImeSelection();
+                return result;
+            }
+
+            @Override
+            public boolean setSelection(int start, int end) {
+                Editable content = getEditable();
+                // With no surrounding terminal text, zero is only a virtual origin.
+                // fcitx requests -1 for a left swipe there, including after reconnecting.
+                boolean leftOfOrigin = start == -1 && end == -1 && mCommittedCursor == 0 &&
+                    getComposingSpanStart(content) < 0;
+                if ((start < 0 || end < 0) && !leftOfOrigin) return false;
+                if (getComposingSpanStart(content) >= 0) {
+                    // Preedit cursor movement belongs to the IME, not the shell.
+                    if (start < mCommittedCursor || end < mCommittedCursor ||
+                        start > mCommittedCursor + content.length() ||
+                        end > mCommittedCursor + content.length()) return false;
+                    super.setSelection(start - mCommittedCursor, end - mCommittedCursor);
+                } else {
+                    if (start != end) return false;
+                    int count = Math.abs(start - mCommittedCursor);
+                    int key = start < mCommittedCursor
+                        ? KeyEvent.KEYCODE_DPAD_LEFT : KeyEvent.KEYCODE_DPAD_RIGHT;
+                    for (int i = 0; i < count; i++) {
+                        sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, key));
+                        sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, key));
+                    }
+                    mCommittedCursor = Math.max(0, start);
+                }
+                updateImeSelection();
+                return true;
+            }
+
+            @Override
+            public boolean setComposingRegion(int start, int end) {
+                boolean result = super.setComposingRegion(
+                    start - mCommittedCursor, end - mCommittedCursor);
+                updateImeSelection();
+                return result;
+            }
 
             @Override
             public boolean finishComposingText() {
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) mClient.logInfo(LOG_TAG, "IME: finishComposingText()");
+                beginBatchEdit();
                 super.finishComposingText();
-
-                sendTextToTerminal(getEditable());
-                getEditable().clear();
+                Editable content = getEditable();
+                sendTextToTerminal(content);
+                mCommittedCursor += content.length();
+                content.clear();
+                Selection.setSelection(content, 0);
+                endBatchEdit();
                 return true;
             }
 
@@ -481,14 +564,26 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
                     mClient.logInfo(LOG_TAG, "IME: commitText(\"" + text + "\", " + newCursorPosition + ")");
                 }
+                beginBatchEdit();
                 super.commitText(text, newCursorPosition);
-
-                if (mTerminal == null) return true;
-
                 Editable content = getEditable();
                 sendTextToTerminal(content);
+                mCommittedCursor += content.length();
                 content.clear();
+                Selection.setSelection(content, 0);
+                endBatchEdit();
                 return true;
+            }
+
+            @Override
+            public boolean sendKeyEvent(KeyEvent event) {
+                boolean result = super.sendKeyEvent(event);
+                if (event.getAction() == KeyEvent.ACTION_DOWN &&
+                    event.getKeyCode() == KeyEvent.KEYCODE_DEL) {
+                    mCommittedCursor = Math.max(0, mCommittedCursor - 1);
+                    updateImeSelection();
+                }
+                return result;
             }
 
             @Override
@@ -496,10 +591,13 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
                 if (TERMINAL_VIEW_KEY_LOGGING_ENABLED) {
                     mClient.logInfo(LOG_TAG, "IME: deleteSurroundingText(" + leftLength + ", " + rightLength + ")");
                 }
+                beginBatchEdit();
                 // The stock Samsung keyboard with 'Auto check spelling' enabled sends leftLength > 1.
                 KeyEvent deleteKey = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL);
                 for (int i = 0; i < leftLength; i++) sendKeyEvent(deleteKey);
-                return super.deleteSurroundingText(leftLength, rightLength);
+                boolean result = super.deleteSurroundingText(leftLength, rightLength);
+                endBatchEdit();
+                return result;
             }
 
             void sendTextToTerminal(CharSequence text) {
@@ -1509,8 +1607,8 @@ public final class TerminalView extends SurfaceView implements SurfaceHolder.Cal
     }
 
     @Nullable
-    public int[] selectWordOrOutput(int column, int row) {
-        return mTerminal == null ? null : mTerminal.selectWordOrOutput(column, row);
+    public int[] selectWord(int column, int row) {
+        return mTerminal == null ? null : mTerminal.selectWord(column, row);
     }
 
     public void clearNativeSelection() {

@@ -94,7 +94,7 @@ public class TextSelectionCursorController implements CursorController {
         int[] columnAndRow = terminalView.getColumnAndRow(event);
         mSelX1 = mSelX2 = columnAndRow[0];
         mSelY1 = mSelY2 = columnAndRow[1];
-        int[] selection = terminalView.selectWordOrOutput(mSelX1, mSelY1);
+        int[] selection = terminalView.selectWord(mSelX1, mSelY1);
         if (selection != null && selection.length == 4) {
             mSelX1 = selection[0];
             mSelY1 = selection[1];

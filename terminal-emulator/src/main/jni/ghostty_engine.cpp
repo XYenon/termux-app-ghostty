@@ -2025,7 +2025,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeClearSearch(
 }
 
 extern "C" JNIEXPORT jintArray JNICALL
-Java_com_termux_terminal_GhosttyTerminal_nativeSelectWordOrOutput(
+Java_com_termux_terminal_GhosttyTerminal_nativeSelectWord(
     JNIEnv *env, jclass, jlong handle, jint column, jint viewport_row) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
     GhosttyGridRef ref;
@@ -2039,15 +2039,11 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSelectWordOrOutput(
     termux_ghostty_engine_lock(engine);
     bool ok = viewport_ref(engine, column, viewport_row, &ref);
     if (ok) {
-        GhosttyResult result =
-            ghostty_terminal_select_output(engine->terminal, ref, &selection);
-        if (result != GHOSTTY_SUCCESS) {
-            GhosttyTerminalSelectWordOptions options{};
-            options.size = sizeof(options);
-            options.ref = ref;
-            result = ghostty_terminal_select_word(engine->terminal, &options,
-                                                  &selection);
-        }
+        GhosttyTerminalSelectWordOptions options{};
+        options.size = sizeof(options);
+        options.ref = ref;
+        GhosttyResult result = ghostty_terminal_select_word(
+            engine->terminal, &options, &selection);
         ok = result == GHOSTTY_SUCCESS &&
             ghostty_terminal_selection_ordered(
                 engine->terminal, &selection, GHOSTTY_SELECTION_ORDER_FORWARD,
