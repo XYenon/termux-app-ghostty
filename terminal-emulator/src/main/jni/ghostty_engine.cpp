@@ -550,7 +550,7 @@ GhosttyClipboardWriteResult clipboard_write_result(
     constexpr size_t kMaxClipboardRepresentations = 1024;
     constexpr size_t kMaxMimeBytes = 256;
     auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
-    if (!write || write->size < sizeof(GhosttyClipboardWrite))
+    if (!write)
         return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
     if (write->contents_len > 0 && !write->contents) {
         return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
@@ -665,8 +665,7 @@ GhosttyClipboardWriteResult clipboard_write_result(
 
 void clipboard_write(GhosttyTerminal, void *userdata,
                      const GhosttyClipboardWrite *write) {
-    if (!write || write->size < offsetof(GhosttyClipboardWrite, reply) +
-            sizeof(GhosttyClipboardWriteReplyFn)) return;
+    if (!write) return;
     const GhosttyClipboardWriteReplyFn reply_fn = write->reply;
     if (!reply_fn) return;
     GhosttyClipboardWriteReply reply{};
@@ -678,7 +677,7 @@ void clipboard_write(GhosttyTerminal, void *userdata,
 void clipboard_read(GhosttyTerminal, void *userdata,
                     const GhosttyClipboardRead *read) {
     auto *engine = static_cast<TermuxGhosttyEngine *>(userdata);
-    if (!read || read->size < sizeof(GhosttyClipboardRead) || !read->reply) return;
+    if (!read || !read->reply) return;
 
     GhosttyClipboardReadReply reply{};
     reply.size = sizeof(reply);
@@ -1045,20 +1044,25 @@ jintArray new_int_array(JNIEnv *env, const jint (&values)[N]) {
 }
 
 jbyteArray format_transcript(JNIEnv *env, TermuxGhosttyEngine *engine,
-                             bool unwrap, bool trim) {
+                             bool unwrap, bool trim,
+                             const GhosttySelection *selection = nullptr) {
     GhosttyFormatter formatter = nullptr;
-    GhosttyFormatterTerminalOptions options{};
-    options.size = sizeof(options);
-    options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
-    options.unwrap = unwrap;
-    options.trim = trim;
-    if (ghostty_formatter_terminal_new(nullptr, &formatter, engine->terminal,
-                                       options) != GHOSTTY_SUCCESS) {
+    if (ghostty_formatter_terminal_new(nullptr, &formatter, engine->terminal) !=
+        GHOSTTY_SUCCESS) {
         return nullptr;
     }
+    const GhosttyFormatterExtras extras = GHOSTTY_FORMATTER_EXTRAS_NONE;
+    GhosttyResult result = ghostty_formatter_set(
+        formatter, GHOSTTY_FORMATTER_OPT_UNWRAP, &unwrap);
+    if (result == GHOSTTY_SUCCESS) result = ghostty_formatter_set(
+        formatter, GHOSTTY_FORMATTER_OPT_TRIM, &trim);
+    if (result == GHOSTTY_SUCCESS) result = ghostty_formatter_set(
+        formatter, GHOSTTY_FORMATTER_OPT_EXTRAS, &extras);
+    if (result == GHOSTTY_SUCCESS && selection) result = ghostty_formatter_set(
+        formatter, GHOSTTY_FORMATTER_OPT_SELECTION, selection);
     uint8_t *data = nullptr;
     size_t length = 0;
-    GhosttyResult result =
+    if (result == GHOSTTY_SUCCESS) result =
         ghostty_formatter_format_alloc(formatter, nullptr, &data, &length);
     ghostty_formatter_free(formatter);
     if (result != GHOSTTY_SUCCESS) return nullptr;
@@ -1078,7 +1082,6 @@ bool relative_viewport_ref(TermuxGhosttyEngine *engine, int column, int row,
     point.value.coordinate.x = static_cast<uint16_t>(std::max(0, column));
     point.value.coordinate.y = static_cast<uint32_t>(screen_row);
     *out = {};
-    out->size = sizeof(*out);
     return ghostty_terminal_grid_ref(engine->terminal, point, out) ==
         GHOSTTY_SUCCESS;
 }
@@ -1090,7 +1093,6 @@ bool viewport_ref(TermuxGhosttyEngine *engine, int column, int row,
     point.value.coordinate.x = static_cast<uint16_t>(std::max(0, column));
     point.value.coordinate.y = static_cast<uint32_t>(std::max(0, row));
     *out = {};
-    out->size = sizeof(*out);
     return ghostty_terminal_grid_ref(engine->terminal, point, out) ==
         GHOSTTY_SUCCESS;
 }
@@ -1098,18 +1100,7 @@ bool viewport_ref(TermuxGhosttyEngine *engine, int column, int row,
 jbyteArray format_selection(JNIEnv *env, TermuxGhosttyEngine *engine,
                             const GhosttySelection &selection, bool unwrap,
                             bool trim) {
-    GhosttyTerminalSelectionFormatOptions options{};
-    options.size = sizeof(options);
-    options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
-    options.unwrap = unwrap;
-    options.trim = trim;
-    options.selection = &selection;
-    uint8_t *data = nullptr;
-    size_t length = 0;
-    GhosttyResult result = ghostty_terminal_selection_format_alloc(
-        engine->terminal, nullptr, options, &data, &length);
-    if (result != GHOSTTY_SUCCESS) return nullptr;
-    return take_ghostty_bytes(env, data, length);
+    return format_transcript(env, engine, unwrap, trim, &selection);
 }
 
 void destroy_engine(JNIEnv *env, TermuxGhosttyEngine *engine) {
@@ -1605,7 +1596,6 @@ Java_com_termux_terminal_GhosttyTerminal_nativeFormatViewport(
     auto *engine = termux_ghostty_engine_from_handle(handle);
     GhosttyTerminalScrollbar scrollbar{};
     GhosttySelection selection{};
-    selection.size = sizeof(selection);
     uint16_t columns = 0;
     termux_ghostty_engine_lock(engine);
     bool ok = ghostty_terminal_get(
@@ -1664,7 +1654,7 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeSetDefaultCursor(
     JNIEnv *, jclass, jlong handle, jint style, jboolean blink) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
-    auto cursor_style = static_cast<GhosttyTerminalCursorStyle>(style);
+    auto cursor_style = static_cast<GhosttyCursorStyle>(style);
     bool should_blink = blink;
     termux_ghostty_engine_lock(engine);
     ghostty_terminal_set(engine->terminal,
@@ -1796,10 +1786,10 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSendKey(
         throw_illegal_state(env, "Out of memory encoding terminal key");
         return false;
     }
-    char output[128];
+    uint8_t output[128];
     size_t written = 0;
     termux_ghostty_engine_lock(engine);
-    ghostty_key_encoder_setopt_from_terminal(engine->key_encoder,
+    ghostty_key_encoder_set_from_terminal(engine->key_encoder,
                                              engine->terminal);
     ghostty_key_event_set_key(engine->key_event, map_android_key(key));
     ghostty_key_event_set_action(
@@ -1810,9 +1800,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSendKey(
         engine->key_event, static_cast<GhosttyMods>(consumed_modifiers));
     ghostty_key_event_set_composing(engine->key_event, composing);
     ghostty_key_event_set_utf8(engine->key_event,
-                               utf8.empty() ? nullptr :
-                                   reinterpret_cast<const char *>(utf8.data()),
-                               utf8.size());
+                               {utf8.data(), utf8.size()});
     ghostty_key_event_set_unshifted_codepoint(
         engine->key_event, static_cast<uint32_t>(unshifted_codepoint));
     GhosttyResult result = ghostty_key_encoder_encode(
@@ -1843,7 +1831,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSendMouse(
     jfloat x, jfloat y, jint screen_width, jint screen_height, jint cell_width,
     jint cell_height) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
-    char output[128];
+    uint8_t output[128];
     size_t written = 0;
     GhosttyMouseEncoderSize size{};
     size.size = sizeof(size);
@@ -1853,9 +1841,9 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSendMouse(
     size.cell_height = static_cast<uint32_t>(cell_height);
 
     termux_ghostty_engine_lock(engine);
-    ghostty_mouse_encoder_setopt_from_terminal(engine->mouse_encoder,
+    ghostty_mouse_encoder_set_from_terminal(engine->mouse_encoder,
                                                engine->terminal);
-    ghostty_mouse_encoder_setopt(engine->mouse_encoder,
+    ghostty_mouse_encoder_set(engine->mouse_encoder,
                                  GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
     ghostty_mouse_event_set_action(
         engine->mouse_event, static_cast<GhosttyMouseAction>(action));
@@ -1885,7 +1873,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSendFocus(
     JNIEnv *, jclass, jlong handle, jboolean focused) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
     bool enabled = false;
-    char output[8];
+    uint8_t output[8];
     size_t written = 0;
     termux_ghostty_engine_lock(engine);
     GhosttyTerminalModeConfig mode{GHOSTTY_MODE_FOCUS_EVENT, false};
@@ -1908,7 +1896,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeScrollViewport(
     JNIEnv *, jclass, jlong handle, jint rows) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
     GhosttyTerminalScrollViewport scroll{};
-    scroll.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
+    scroll.tag = GHOSTTY_TERMINAL_SCROLL_VIEWPORT_DELTA;
     scroll.value.delta = rows;
     termux_ghostty_engine_lock(engine);
     ghostty_terminal_scroll_viewport(engine->terminal, scroll);
@@ -1920,7 +1908,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeScrollToPrompt(
     JNIEnv *, jclass, jlong handle, jint count) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
     GhosttyTerminalScrollViewport scroll{};
-    scroll.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA_PROMPT;
+    scroll.tag = GHOSTTY_TERMINAL_SCROLL_VIEWPORT_DELTA_PROMPT;
     scroll.value.delta_prompt = count;
     termux_ghostty_engine_lock(engine);
     ghostty_terminal_scroll_viewport(engine->terminal, scroll);
@@ -1932,7 +1920,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeScrollToBottom(
     JNIEnv *, jclass, jlong handle) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
     GhosttyTerminalScrollViewport scroll{};
-    scroll.tag = GHOSTTY_SCROLL_VIEWPORT_BOTTOM;
+    scroll.tag = GHOSTTY_TERMINAL_SCROLL_VIEWPORT_BOTTOM;
     termux_ghostty_engine_lock(engine);
     ghostty_terminal_scroll_viewport(engine->terminal, scroll);
     termux_ghostty_engine_unlock(engine);
@@ -1957,7 +1945,6 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSearch(
     size_t selected = 0;
     size_t total = 0;
     GhosttySelection match{};
-    match.size = sizeof(match);
 
     termux_ghostty_engine_lock(engine);
     GhosttyResult result = GHOSTTY_SUCCESS;
@@ -1971,11 +1958,8 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSearch(
     }
     if (result == GHOSTTY_SUCCESS) result = ghostty_search_run(engine->search);
     if (result == GHOSTTY_SUCCESS) {
-        result = ghostty_search_set(
-            engine->search,
-            next ? GHOSTTY_SEARCH_OPT_SELECT_NEXT
-                 : GHOSTTY_SEARCH_OPT_SELECT_PREV,
-            nullptr);
+        result = next ? ghostty_search_select_next(engine->search)
+                      : ghostty_search_select_prev(engine->search);
     }
     if (result == GHOSTTY_SUCCESS) {
         const GhosttySearchData keys[] = {
@@ -2030,9 +2014,7 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSelectWord(
     auto *engine = termux_ghostty_engine_from_handle(handle);
     GhosttyGridRef ref;
     GhosttySelection selection{};
-    selection.size = sizeof(selection);
     GhosttySelection ordered{};
-    ordered.size = sizeof(ordered);
     GhosttyPointCoordinate start{};
     GhosttyPointCoordinate end{};
     GhosttyTerminalScrollbar scrollbar{};
@@ -2081,7 +2063,6 @@ Java_com_termux_terminal_GhosttyTerminal_nativeGetWordAt(
     auto *engine = termux_ghostty_engine_from_handle(handle);
     GhosttyGridRef ref{};
     GhosttySelection selection{};
-    selection.size = sizeof(selection);
     const uint32_t boundary = ' ';
     GhosttyTerminalSelectWordOptions options{};
     options.size = sizeof(options);
@@ -2104,7 +2085,6 @@ Java_com_termux_terminal_GhosttyTerminal_nativeSetSelection(
     jint end_column, jint end_row) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
     GhosttySelection selection{};
-    selection.size = sizeof(selection);
     GhosttyTerminalScrollbar scrollbar{};
     termux_ghostty_engine_lock(engine);
     bool ok = ghostty_terminal_get(
@@ -2134,19 +2114,14 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_termux_terminal_GhosttyTerminal_nativeGetSelectedText(
     JNIEnv *env, jclass, jlong handle) {
     auto *engine = termux_ghostty_engine_from_handle(handle);
-    GhosttyTerminalSelectionFormatOptions options{};
-    options.size = sizeof(options);
-    options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
-    options.unwrap = true;
-    options.trim = true;
-    uint8_t *data = nullptr;
-    size_t length = 0;
+    GhosttySelection selection{};
     termux_ghostty_engine_lock(engine);
-    GhosttyResult result = ghostty_terminal_selection_format_alloc(
-        engine->terminal, nullptr, options, &data, &length);
+    GhosttyResult result = ghostty_terminal_get(
+        engine->terminal, GHOSTTY_TERMINAL_DATA_SELECTION, &selection);
+    jbyteArray text = result == GHOSTTY_SUCCESS
+        ? format_selection(env, engine, selection, true, true) : nullptr;
     termux_ghostty_engine_unlock(engine);
-    if (result != GHOSTTY_SUCCESS) return nullptr;
-    return take_ghostty_bytes(env, data, length);
+    return text;
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL

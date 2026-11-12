@@ -127,7 +127,7 @@ struct KittyDrawPlacement {
     uint32_t source_width;
     uint32_t source_height;
     int32_t z;
-    GhosttyRenderStateImageLayer layer;
+    GhosttyImageLayer layer;
 };
 
 struct CursorFrameState {
@@ -135,8 +135,7 @@ struct CursorFrameState {
     uint16_t x = 0;
     uint16_t y = 0;
     bool wide_tail = false;
-    GhosttyRenderStateCursorVisualStyle style =
-        GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK;
+    GhosttyCursorStyle style = GHOSTTY_CURSOR_STYLE_BLOCK;
 };
 
 constexpr bool cursor_states_equal(const CursorFrameState &left,
@@ -165,32 +164,32 @@ constexpr uint16_t cursor_width_cells(const CursorFrameState &cursor,
 }
 
 static_assert(cursor_row_needs_redraw(
-    {true, 1, 2, false, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
-    {true, 8, 2, false, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK}, 2));
+    {true, 1, 2, false, GHOSTTY_CURSOR_STYLE_BLOCK},
+    {true, 8, 2, false, GHOSTTY_CURSOR_STYLE_BLOCK}, 2));
 static_assert(cursor_row_needs_redraw(
-    {true, 1, 2, false, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
-    {true, 1, 3, false, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK}, 2));
+    {true, 1, 2, false, GHOSTTY_CURSOR_STYLE_BLOCK},
+    {true, 1, 3, false, GHOSTTY_CURSOR_STYLE_BLOCK}, 2));
 static_assert(cursor_row_needs_redraw(
-    {true, 1, 2, false, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
-    {true, 1, 3, false, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK}, 3));
+    {true, 1, 2, false, GHOSTTY_CURSOR_STYLE_BLOCK},
+    {true, 1, 3, false, GHOSTTY_CURSOR_STYLE_BLOCK}, 3));
 static_assert(!cursor_row_needs_redraw(
-    {true, 1, 2, false, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
-    {true, 1, 3, false, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK}, 4));
+    {true, 1, 2, false, GHOSTTY_CURSOR_STYLE_BLOCK},
+    {true, 1, 3, false, GHOSTTY_CURSOR_STYLE_BLOCK}, 4));
 static_assert(cursor_row_needs_redraw(
-    {true, 1, 2, false, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
+    {true, 1, 2, false, GHOSTTY_CURSOR_STYLE_BLOCK},
     {}, 2));
 static_assert(cursor_start_column(
-    {true, 3, 2, false, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK}) == 3);
+    {true, 3, 2, false, GHOSTTY_CURSOR_STYLE_BLOCK}) == 3);
 static_assert(cursor_start_column(
-    {true, 3, 2, true, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK}) == 2);
+    {true, 3, 2, true, GHOSTTY_CURSOR_STYLE_BLOCK}) == 2);
 static_assert(cursor_width_cells({}, GHOSTTY_CELL_WIDE_NARROW) == 1);
 static_assert(cursor_width_cells({}, GHOSTTY_CELL_WIDE_WIDE) == 2);
 static_assert(cursor_width_cells(
-    {true, 3, 2, true, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
+    {true, 3, 2, true, GHOSTTY_CURSOR_STYLE_BLOCK},
     GHOSTTY_CELL_WIDE_SPACER_TAIL) == 2);
 static_assert(!cursor_states_equal(
-    {true, 3, 2, false, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK},
-    {true, 3, 2, true, GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK}));
+    {true, 3, 2, false, GHOSTTY_CURSOR_STYLE_BLOCK},
+    {true, 3, 2, true, GHOSTTY_CURSOR_STYLE_BLOCK}));
 
 struct TermuxVulkanRenderer {
     TermuxGhosttyEngine *engine = nullptr;
@@ -733,7 +732,9 @@ CachedTextRun load_text_run(FontSystem *fonts, const uint8_t *bytes,
                             size_t length, const GhosttyStyle &style,
                             uint32_t cell_columns) {
     CachedTextRun result;
-    Face *face = face_for_text(fonts, bytes, length, style.bold, style.italic);
+    Face *face = face_for_text(fonts, bytes, length,
+                              (style.flags & GHOSTTY_STYLE_FLAG_BOLD) != 0,
+                              (style.flags & GHOSTTY_STYLE_FLAG_ITALIC) != 0);
     hb_buffer_t *buffer = hb_buffer_create();
     hb_buffer_add_utf8(buffer, reinterpret_cast<const char *>(bytes), length,
                        0, length);
@@ -845,8 +846,8 @@ void draw_text(FontSystem *fonts, std::vector<uint8_t> *frame,
 
     TextRunKey key{
         std::string(reinterpret_cast<const char *>(bytes), length),
-        style.bold,
-        style.italic,
+        (style.flags & GHOSTTY_STYLE_FLAG_BOLD) != 0,
+        (style.flags & GHOSTTY_STYLE_FLAG_ITALIC) != 0,
         cell_columns,
     };
     auto found = fonts->text_runs.find(key);
@@ -1155,7 +1156,7 @@ void draw_cell_content(TermuxVulkanRenderer *renderer, const RenderCell &cell,
     int top = cell.row * renderer->fonts.cell_height;
     int right = (cell.column + 1) * renderer->fonts.cell_width;
     int bottom = (cell.row + 1) * renderer->fonts.cell_height;
-    if (!cell.style.invisible && !cell.text.empty() &&
+    if (!(cell.style.flags & GHOSTTY_STYLE_FLAG_INVISIBLE) && !cell.text.empty() &&
         cell.codepoint != KITTY_UNICODE_PLACEHOLDER) {
         const CachedGlyph *glyph = glyphs_available
             ? glyph_for_codepoint(renderer, cell.codepoint)
@@ -1176,14 +1177,14 @@ void draw_cell_content(TermuxVulkanRenderer *renderer, const RenderCell &cell,
                       cell_columns);
         }
     }
-    if (cell.style.underline != 0) {
+    if (GHOSTTY_STYLE_UNDERLINE(cell.style) != 0) {
         fill_frame_rect(renderer, left, bottom - 2, right, bottom - 1, color);
     }
-    if (cell.style.strikethrough) {
+    if (cell.style.flags & GHOSTTY_STYLE_FLAG_STRIKETHROUGH) {
         int y = top + renderer->fonts.cell_height / 2;
         fill_frame_rect(renderer, left, y, right, y + 1, color);
     }
-    if (cell.style.overline) {
+    if (cell.style.flags & GHOSTTY_STYLE_FLAG_OVERLINE) {
         fill_frame_rect(renderer, left, top, right, top + 1, color);
     }
 }
@@ -1215,21 +1216,21 @@ void draw_kitty_image(TermuxVulkanRenderer *renderer,
     if (!image || pixel_width == 0 || pixel_height == 0 ||
         source_width == 0 || source_height == 0) return;
 
-    const uint8_t *pixels = nullptr;
-    size_t length = 0;
+    GhosttyString pixel_data{};
     uint32_t image_width = 0;
     uint32_t image_height = 0;
     GhosttyKittyImageFormat format = GHOSTTY_KITTY_IMAGE_FORMAT_RGBA;
+    if (ghostty_kitty_graphics_image_get(
+            image, GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_PIXELS, &pixel_data) !=
+        GHOSTTY_SUCCESS) return;
+    const uint8_t *pixels = pixel_data.ptr;
+    const size_t length = pixel_data.len;
     ghostty_kitty_graphics_image_get(
-        image, GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR, &pixels);
+        image, GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH, &image_width);
     ghostty_kitty_graphics_image_get(
-        image, GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN, &length);
+        image, GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT, &image_height);
     ghostty_kitty_graphics_image_get(
-        image, GHOSTTY_KITTY_IMAGE_DATA_WIDTH, &image_width);
-    ghostty_kitty_graphics_image_get(
-        image, GHOSTTY_KITTY_IMAGE_DATA_HEIGHT, &image_height);
-    ghostty_kitty_graphics_image_get(
-        image, GHOSTTY_KITTY_IMAGE_DATA_FORMAT, &format);
+        image, GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT, &format);
     if (!pixels || length == 0) return;
 
     uint32_t bytes_per_pixel = 1;
@@ -1376,7 +1377,7 @@ bool collect_kitty_placements(TermuxVulkanRenderer *renderer) {
 
 void draw_kitty_layer(TermuxVulkanRenderer *renderer,
                       GhosttyKittyGraphics graphics,
-                      GhosttyRenderStateImageLayer layer) {
+                      GhosttyImageLayer layer) {
     for (const auto &placement : renderer->kitty_placements) {
         if (placement.layer != layer) continue;
         draw_kitty_image(
@@ -1411,13 +1412,13 @@ void clear_render_dirty(TermuxGhosttyEngine *engine) {
         bool clean = false;
         while (ghostty_render_state_row_iterator_next(engine->row_iterator)) {
             ghostty_render_state_row_set(
-                engine->row_iterator, GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY,
+                engine->row_iterator, GHOSTTY_RENDER_STATE_ROW_OPT_DIRTY,
                 &clean);
         }
     }
     GhosttyRenderStateDirty clean = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
     ghostty_render_state_set(engine->render_state,
-                            GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean);
+                            GHOSTTY_RENDER_STATE_OPT_DIRTY, &clean);
 }
 
 bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
@@ -1548,7 +1549,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
                         renderer->extent.height, colors.background);
         if (kitty_graphics)
             draw_kitty_layer(renderer, kitty_graphics_handle,
-                             GHOSTTY_RENDER_STATE_IMAGE_LAYER_BELOW_BACKGROUND);
+                             GHOSTTY_IMAGE_LAYER_BELOW_BACKGROUND);
         fill_frame_rect(renderer, 0, 0, cols * renderer->fonts.cell_width,
                         rows * renderer->fonts.cell_height, colors.background);
     }
@@ -1574,7 +1575,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
                 renderer->frame_cursor, current_cursor, row_index)) ||
              (current_cursor.drawn &&
               current_cursor.style ==
-                  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK &&
+                  GHOSTTY_CURSOR_STYLE_BLOCK &&
               current_cursor.y == row_index));
         if (!full_redraw && !row_dirty && !cursor_row) {
             ++row_index;
@@ -1595,7 +1596,6 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
                column < cols) {
             GhosttyCell raw = 0;
             GhosttyStyle style{};
-            style.size = sizeof(style);
             GhosttyColorRgb foreground = colors.foreground;
             GhosttyColorRgb background = colors.background;
             bool selected = false;
@@ -1624,8 +1624,10 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
             ghostty_render_state_row_cells_get(
                 engine->row_cells,
                 GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED, &selected);
-            if (style.inverse || selected) std::swap(foreground, background);
-            if (style.faint) foreground = dim_color(foreground);
+            if ((style.flags & GHOSTTY_STYLE_FLAG_INVERSE) || selected)
+                std::swap(foreground, background);
+            if (style.flags & GHOSTTY_STYLE_FLAG_FAINT)
+                foreground = dim_color(foreground);
             if (background.r != colors.background.r ||
                 background.g != colors.background.g ||
                 background.b != colors.background.b) {
@@ -1645,7 +1647,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
             ghostty_cell_get(raw, GHOSTTY_CELL_DATA_CODEPOINT,
                              &cell.codepoint);
             ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &cell.wide);
-            if (!style.invisible) {
+            if (!(style.flags & GHOSTTY_STYLE_FLAG_INVISIBLE)) {
                 GhosttyResult text_result =
                     ghostty_render_state_row_cells_get(
                         engine->row_cells,
@@ -1673,7 +1675,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
 
     if (kitty_graphics)
         draw_kitty_layer(renderer, kitty_graphics_handle,
-                         GHOSTTY_RENDER_STATE_IMAGE_LAYER_BELOW_TEXT);
+                         GHOSTTY_IMAGE_LAYER_BELOW_TEXT);
 
     for (const auto &cell : renderer->render_cells) {
         draw_cell_content(renderer, cell, use_glyphs, cell.foreground);
@@ -1681,7 +1683,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
 
     if (kitty_graphics)
         draw_kitty_layer(renderer, kitty_graphics_handle,
-                         GHOSTTY_RENDER_STATE_IMAGE_LAYER_ABOVE_TEXT);
+                         GHOSTTY_IMAGE_LAYER_ABOVE_TEXT);
 
     if (current_cursor.drawn) {
         GhosttyColorRgb cursor_color =
@@ -1701,13 +1703,13 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
         bool hollow = false;
         bool solid_block = false;
         switch (current_cursor.style) {
-            case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR:
+            case GHOSTTY_CURSOR_STYLE_BAR:
                 right = left + std::max(1u, renderer->fonts.cell_width / 5);
                 break;
-            case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE:
+            case GHOSTTY_CURSOR_STYLE_UNDERLINE:
                 top = bottom - std::max(1u, renderer->fonts.cell_height / 6);
                 break;
-            case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW:
+            case GHOSTTY_CURSOR_STYLE_BLOCK_HOLLOW:
                 fill_frame_rect(renderer, left, top, right, top + 1,
                                 cursor_color);
                 fill_frame_rect(renderer, left, bottom - 1, right, bottom,
@@ -1718,7 +1720,7 @@ bool compose_frame(TermuxVulkanRenderer *renderer, bool cursor_visible,
                                 cursor_color);
                 hollow = true;
                 break;
-            case GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK:
+            case GHOSTTY_CURSOR_STYLE_BLOCK:
                 solid_block = true;
                 break;
             default:
@@ -2218,7 +2220,7 @@ TermuxRendererDrawResult termux_renderer_draw(
         std::chrono::steady_clock::now() - engine->render_hold_started >=
             std::chrono::seconds(1)) {
         const GhosttyTerminalModeConfig mode = {
-            GHOSTTY_MODE_SYNC_OUTPUT, false
+            GHOSTTY_MODE_SYNCHRONIZED_OUTPUT, false
         };
         ghostty_terminal_set(engine->terminal, GHOSTTY_TERMINAL_OPT_MODE,
                             &mode);

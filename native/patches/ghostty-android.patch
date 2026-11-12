@@ -1,8 +1,8 @@
 diff --git a/include/ghostty/vt.h b/include/ghostty/vt.h
-index cfa1017e7..48a31ee16 100644
+index f83662bdf..268ecb664 100644
 --- a/include/ghostty/vt.h
 +++ b/include/ghostty/vt.h
-@@ -148,6 +148,7 @@ extern "C" {
+@@ -172,6 +172,7 @@ extern "C" {
  #include <ghostty/vt/device.h>
  #include <ghostty/vt/focus.h>
  #include <ghostty/vt/formatter.h>
@@ -110,22 +110,22 @@ index 000000000..898c82728
 +
 +#endif /* GHOSTTY_VT_GLYPH_H */
 diff --git a/src/lib_vt.zig b/src/lib_vt.zig
-index 06252080a..aef02f03c 100644
+index 440031a2e..18835ace1 100644
 --- a/src/lib_vt.zig
 +++ b/src/lib_vt.zig
-@@ -295,6 +295,10 @@ comptime {
-             @export(&c.terminal_selection_format_buf, .{ .name = "ghostty_terminal_selection_format_buf" });
-             @export(&c.terminal_selection_format_alloc, .{ .name = "ghostty_terminal_selection_format_alloc" });
-         }
+@@ -282,6 +282,10 @@ comptime {
+         @export(&c.formatter_format_buf, .{ .name = "ghostty_formatter_format_buf" });
+         @export(&c.formatter_format_alloc, .{ .name = "ghostty_formatter_format_alloc" });
+         @export(&c.formatter_free, .{ .name = "ghostty_formatter_free" });
 +        @export(&c.glyph_generation, .{ .name = "ghostty_glyph_generation" });
 +        @export(&c.glyph_info, .{ .name = "ghostty_glyph_info" });
 +        @export(&c.glyph_contours, .{ .name = "ghostty_glyph_contours" });
 +        @export(&c.glyph_points, .{ .name = "ghostty_glyph_points" });
-         if (features.render_state) {
-             @export(&c.render_state_new, .{ .name = "ghostty_render_state_new" });
-             @export(&c.render_state_update, .{ .name = "ghostty_render_state_update" });
+         @export(&c.render_state_new, .{ .name = "ghostty_render_state_new" });
+         @export(&c.render_state_update, .{ .name = "ghostty_render_state_update" });
+         @export(&c.render_state_begin_update, .{ .name = "ghostty_render_state_begin_update" });
 diff --git a/src/terminal/Terminal.zig b/src/terminal/Terminal.zig
-index 8b2db5654..f4fffe905 100644
+index 30424fc2e..72020fff4 100644
 --- a/src/terminal/Terminal.zig
 +++ b/src/terminal/Terminal.zig
 @@ -96,6 +96,9 @@ mouse_shape: mouse.Shape = .text,
@@ -138,17 +138,17 @@ index 8b2db5654..f4fffe905 100644
  /// Kitty drag and drop protocol (OSC 72) state. Allocated when a client
  /// registers to accept drops (t=a) and freed when it unregisters (t=A),
  /// so a terminal that never runs a drag and drop aware program pays
-@@ -684,6 +687,9 @@ fn printSliceFast(
+@@ -741,6 +744,9 @@ fn printSliceFast(
      grapheme_cluster: bool,
      allow_unicode: bool,
  ) !usize {
 +    // Glyph Protocol registrations can override Unicode cell widths.
 +    if (self.glyph_glossary.entries.count() > 0) return 0;
 +
-     const screen: *Screen = self.screens.active;
-
-     // Codepoints in [0x10, 0xFF] are always narrow (width 1, matching
-@@ -1505,7 +1511,12 @@ pub fn print(self: *Terminal, c: u21) !void {
+     // Printable ASCII is always narrow and eligible.
+     if (comptime Cp == u8) return self.printSliceFill(
+         .narrow,
+@@ -2129,7 +2135,12 @@ pub fn print(self: *Terminal, c: u21) !void {
      // non-single-width characters properly. We have a fast-path for
      // byte-sized characters since they're so common. We can ignore
      // control characters because they're always filtered prior.
@@ -162,7 +162,7 @@ index 8b2db5654..f4fffe905 100644
 
      // Note: it is possible to have a width of "3" and a width of "-1" from
      // uucode.x's wcwidth. We should look into those cases and handle them
-@@ -3925,7 +3936,13 @@ pub fn glyphProtocol(
+@@ -4680,7 +4691,13 @@ pub fn glyphProtocol(
  ) ?glyph.Response {
      const resp = glyph.execute(alloc, &self.glyph_glossary, req);
      switch (req.*) {
@@ -177,7 +177,7 @@ index 8b2db5654..f4fffe905 100644
          .support, .query => {},
      }
      return resp;
-@@ -5132,6 +5149,10 @@ pub fn fullReset(self: *Terminal) void {
+@@ -5893,6 +5910,10 @@ pub fn fullReset(self: *Terminal) void {
      self.pwd.clearRetainingCapacity();
      self.title.clearRetainingCapacity();
      self.glyph_glossary.clearAndFree(self.gpa());
@@ -190,10 +190,10 @@ index 8b2db5654..f4fffe905 100644
      if (self.kitty_dnd) |dnd| dnd.chunking = .{};
 diff --git a/src/terminal/c/glyph.zig b/src/terminal/c/glyph.zig
 new file mode 100644
-index 000000000..33354bca3
+index 000000000..2f958c03d
 --- /dev/null
 +++ b/src/terminal/c/glyph.zig
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,177 @@
 +const std = @import("std");
 +const lib = @import("../lib.zig");
 +const Result = @import("result.zig").Result;
@@ -219,6 +219,8 @@ index 000000000..33354bca3
 +
 +/// C: GhosttyGlyphInfo
 +pub const Info = extern struct {
++    pub const sized_base = "point_count";
++
 +    size: usize = @sizeOf(Info),
 +    units_per_em: u32 = 0,
 +    advance_width: u32 = 0,
@@ -262,7 +264,7 @@ index 000000000..33354bca3
 +    const terminal = terminal_c.zigTerminal(terminal_) orelse
 +        return .invalid_value;
 +    const out = out_ orelse return .invalid_value;
-+    if (out.size < @sizeOf(Info)) return .invalid_value;
++    if (!lib.sizedCheck(.output, out)) return .invalid_value;
 +    if (codepoint > std.math.maxInt(u21)) return .invalid_value;
 +
 +    const entry = terminal.glyph_glossary.entries.get(@intCast(codepoint)) orelse
@@ -270,7 +272,7 @@ index 000000000..33354bca3
 +    const outline = switch (entry.glyph) {
 +        .glyf => |value| value,
 +    };
-+    out.* = .{
++    lib.sizedWrite(out, .{
 +        .units_per_em = entry.design.units_per_em,
 +        .advance_width = entry.design.advance_width,
 +        .line_height = entry.design.line_height,
@@ -284,7 +286,7 @@ index 000000000..33354bca3
 +        .pad_left = entry.constraint.pad_left,
 +        .contour_count = outline.contours.len,
 +        .point_count = outline.points.len,
-+    };
++    });
 +    return .success;
 +}
 +
@@ -331,11 +333,49 @@ index 000000000..33354bca3
 +    }
 +    return .success;
 +}
++
++test "glyph width survives ASCII and mixed-width print paths and reset" {
++    if (comptime !@import("terminal_options").glyph_protocol) return error.SkipZigTest;
++    const testing = std.testing;
++    var terminal: terminal_c.Terminal = null;
++    try testing.expectEqual(.success, terminal_c.new(&lib.alloc.test_allocator, &terminal, 20, 4));
++    defer terminal_c.free(terminal);
++    const enabled = true;
++    try testing.expectEqual(.success, terminal_c.set(terminal, .glyph_protocol, &enabled));
++
++    const registration = "\x1b_25a1;r;cp=e0a0;width=2;AAAAAAAAAAAAAA==\x1b\\";
++    terminal_c.vt_write(terminal, registration, registration.len);
++    var initial: u64 = 0;
++    var count: usize = 0;
++    try testing.expectEqual(.success, generation(terminal, &initial, &count));
++    try testing.expectEqual(1, count);
++    var value: Info = .{};
++    try testing.expectEqual(.success, info(terminal, 0xE0A0, &value));
++    try testing.expectEqual(2, value.cell_width);
++
++    // ASCII takes the new u8 path, while alternating widths can take the
++    // mixed u32 path. Both must honor the registered PUA's two-cell width.
++    const text = "ab\u{e0a0}c\u{4e2d}\u{e0a0}";
++    terminal_c.vt_write(terminal, text, text.len);
++    var x: u16 = 0;
++    try testing.expectEqual(.success, terminal_c.get(terminal, .cursor_x, &x));
++    try testing.expectEqual(9, x);
++
++    terminal_c.reset(terminal);
++    var after: u64 = 0;
++    try testing.expectEqual(.success, generation(terminal, &after, &count));
++    try testing.expect(after > initial);
++    try testing.expectEqual(0, count);
++    try testing.expectEqual(.no_value, info(terminal, 0xE0A0, &value));
++    terminal_c.vt_write(terminal, text, text.len);
++    try testing.expectEqual(.success, terminal_c.get(terminal, .cursor_x, &x));
++    try testing.expectEqual(7, x);
++}
 diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
-index a0c0dc33c..604b56cd5 100644
+index 3c32b58b1..b57e295dc 100644
 --- a/src/terminal/c/main.zig
 +++ b/src/terminal/c/main.zig
-@@ -8,6 +8,7 @@ pub const color = @import("color.zig");
+@@ -10,6 +10,7 @@ pub const color = @import("color.zig");
  pub const color_scheme = @import("color_scheme.zig");
  pub const focus = @import("focus.zig");
  pub const formatter = @import("formatter.zig");
@@ -343,7 +383,7 @@ index a0c0dc33c..604b56cd5 100644
  pub const grid_ref = @import("grid_ref.zig");
  pub const grid_ref_tracked = @import("grid_ref_tracked.zig");
  pub const io = @import("io.zig");
-@@ -86,6 +87,11 @@ pub const formatter_format_buf = formatter.format_buf;
+@@ -91,6 +92,11 @@ pub const formatter_format_buf = formatter.format_buf;
  pub const formatter_format_alloc = formatter.format_alloc;
  pub const formatter_free = formatter.free;
 
@@ -355,7 +395,7 @@ index a0c0dc33c..604b56cd5 100644
  pub const render_state_new = render.new;
  pub const render_state_free = render.free;
  pub const render_state_update = render.update;
-@@ -277,6 +283,7 @@ test {
+@@ -283,6 +289,7 @@ test {
      _ = row;
      _ = focus;
      _ = formatter;
@@ -363,32 +403,33 @@ index a0c0dc33c..604b56cd5 100644
      _ = modes;
      _ = osc;
      _ = render;
-diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
-index 5f047f489..6e341bc32 100644
---- a/src/terminal/c/terminal.zig
-+++ b/src/terminal/c/terminal.zig
-@@ -845,6 +845,10 @@ pub fn zigTerminal(terminal_: Terminal) ?*ZigTerminal {
-     return (terminal_ orelse return null).terminal;
- }
-
-+pub fn zigIo(terminal_: Terminal) ?std.Io {
-+    return (terminal_ orelse return null).io.io();
-+}
-+
- /// Attach the persistent C stream and I/O owner to a heap-stable terminal.
- /// The caller retains ownership of both inputs if wrapper allocation fails.
- fn wrap(
-diff --git a/src/terminal/page.zig b/src/terminal/page.zig
-index 48d405b5f..6bdb4177d 100644
---- a/src/terminal/page.zig
-+++ b/src/terminal/page.zig
-@@ -2035,7 +2035,8 @@ pub const Capacity = struct {
-     fn availableBytesForGrid(self: Capacity) usize {
-         comptime {
-             assert(cells_align % Page.MetaLayout.alignment == 0);
--            assert(@sizeOf(Cell) % Page.MetaLayout.alignment == 0);
-+            assert(@sizeOf(Cell) %
-+                @as(usize, Page.MetaLayout.alignment) == 0);
-         }
-
-         const l = Page.layout(self);
+diff --git a/src/terminal/c/types.zig b/src/terminal/c/types.zig
+index cb662f3f8..4d8c1ace2 100644
+--- a/src/terminal/c/types.zig
++++ b/src/terminal/c/types.zig
+@@ -31,6 +31,7 @@ const build_info = @import("build_info.zig");
+ const cell = @import("cell.zig");
+ const color_c = @import("color.zig");
+ const formatter = @import("formatter.zig");
++const glyph = @import("glyph.zig");
+ const grid_ref = @import("grid_ref.zig");
+ const io = @import("io.zig");
+ const key_encode = @import("key_encode.zig");
+@@ -399,6 +400,8 @@ pub const type_decls = [_]TypeDecl{
+     .initStruct("GhosttyDeviceAttributesPrimary", terminal.DeviceAttributes.Primary),
+     .initStruct("GhosttyDeviceAttributesSecondary", terminal.DeviceAttributes.Secondary),
+     .initStruct("GhosttyDeviceAttributesTertiary", terminal.DeviceAttributes.Tertiary),
++    .initStruct("GhosttyGlyphInfo", glyph.Info),
++    .initStruct("GhosttyGlyphPoint", glyph.Point),
+     .initStruct("GhosttyGridRef", grid_ref.CGridRef),
+     .initStruct("GhosttyKittyGraphicsPlacementRenderInfo", kitty_graphics.PlacementRenderInfo),
+     .initStruct("GhosttyMimeReader", io.MimeReader),
+@@ -477,6 +480,8 @@ pub const type_decls = [_]TypeDecl{
+     .initEnum("GhosttyFocusEvent", focus_pkg.Event, "GHOSTTY_FOCUS_"),
+     .initEnum("GhosttyFormatterFormat", formatter_pkg.Format, "GHOSTTY_FORMATTER_FORMAT_"),
+     .initEnum("GhosttyFormatterOption", formatter.Option, "GHOSTTY_FORMATTER_OPT_"),
++    .initEnum("GhosttyGlyphConstraintSize", glyph.ConstraintSize, "GHOSTTY_GLYPH_CONSTRAINT_SIZE_"),
++    .initEnum("GhosttyGlyphConstraintAlign", glyph.ConstraintAlign, "GHOSTTY_GLYPH_CONSTRAINT_ALIGN_"),
+     .initEnum("GhosttyImageLayer", render.ImageLayer, "GHOSTTY_IMAGE_LAYER_"),
+     .initEnum("GhosttyImageProtocol", render.ImageProtocol, "GHOSTTY_IMAGE_PROTOCOL_"),
+     .initEnum("GhosttyKey", input_key.Key, "GHOSTTY_KEY_"),

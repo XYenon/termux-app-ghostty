@@ -8,6 +8,134 @@ applies `native/patches/ghostty-android.patch`, and builds `libghostty-vt` for
 the configured Android ABIs. Keep the patch limited to C APIs needed by the
 Android JNI and Vulkan renderer.
 
+## 2026-11-12 sync
+
+The immutable pin moves from `4a4fc017940bec38c93b278c10c6a18c591f3e63` to
+`c6174c88f42b48adb14857c9233b16f6947ab732`, the final upstream `main`
+revision selected for this update. The range contains 360 commits, including
+merges. The commit list and source changes were reviewed for terminal
+behavior, C API compatibility, rendering, build changes and desktop-only
+consumers
+([upstream comparison](https://github.com/ghostty-org/ghostty/compare/4a4fc017940bec38c93b278c10c6a18c591f3e63...c6174c88f42b48adb14857c9233b16f6947ab732)).
+Upstream released the libghostty-vt 1.0 ABI during the range and now reports
+library version 1.0.2-dev. Zig 0.17.0 and Android API 29 remain in use.
+
+Android adaptations:
+
+- JNI uses the new formatter option setters for transcript, viewport and
+  selected-text export. Selected-text export explicitly reads the active
+  selection before formatting, so an absent selection cannot export the
+  entire transcript. Unwrap and trim retain their caller-selected values.
+- The Vulkan renderer reads the frozen 16-byte `GhosttyStyle` through its
+  attribute flags and underline mask. Font selection, cached text runs,
+  inverse/faint/invisible text and line decorations use the new layout.
+  Cursor styles and image composition layers use the shared upstream enums.
+- Kitty image pixels are read as one borrowed pointer/length pair. An
+  incomplete image returns no pixels, so metadata describing its expected
+  decoded size cannot be mistaken for an available pixel buffer. Animation
+  deadlines and RenderState placement collection retain the official APIs.
+- JNI uses the renamed key/mouse setters, byte buffers, `GhosttyString` key
+  text, search navigation functions, viewport tags and synchronized-output
+  mode. Frozen grid references, selections and clipboard callback payloads
+  no longer have a size field. Clipboard replies and other sized structures
+  retain their required size initialization. Direct word selection is
+  preserved.
+- The rebased Android patch retains glyph introspection, contours/points,
+  width overrides and generation tracking. Glyph types are registered in
+  the new C/Zig ABI type manifest, and glyph info follows upstream's
+  sized-output rule. Registered widths still bypass the new ASCII and
+  mixed-width print optimizations. A regression test checks two-cell PUA
+  glyphs among ASCII/CJK text and their width after reset.
+  The unused internal `zigIo()` accessor is removed from the patch.
+  The old 32-bit alignment cast is removed because upstream replaced that
+  assertion and calculation with an aligned grid-space calculation.
+
+The terminal directly gains DECIC/DECDC column insertion/deletion and
+DECBI/DECFI backward/forward index through the existing PTY parser. The pin
+also fixes pending wraps at right margins, scrollback recovery when growing
+rows while shrinking columns, dangling pins after column growth, stale
+prompts after resize/reflow, and dirty-row retries after a failed render
+update. Kitty placeholders now target only virtual placements, numbered
+image lookup and eviction use transmission order, and chunked replacements
+keep the previous image visible until the transmission ends. ASCII/CJK
+printing, multi-attribute SGR handling, blank-row clearing, style lookup,
+page capacity reuse and invalid UTF-8 decoding are improved upstream.
+No duplicate Android parser or storage implementation is needed.
+
+Reviewed changes that need no new Android integration:
+
+- CMake/pkg-config distribution, shared-library versioning, allocator
+  extensions, feature queries, ABI checks, offline dependency archives and
+  release documentation support external library consumers. Android keeps
+  its pinned source build and static archive linked into JNI.
+- The search thread test now waits up to five seconds and stops and joins
+  the worker before propagating a timeout, so a timed-out test cannot free
+  memory while the worker still uses it.
+- The existing Bash, Zsh, Fish, Nushell and Elvish resources have no changes
+  in the range. Their system loading, HOME preservation and Elvish's
+  explicit import remain in place. OSC 7501 session state and lifecycle
+  handling also retain their existing integration.
+- Desktop tmux control-mode window handling, SSH terminfo installation,
+  command parsing, window-theme actions, macOS isolation/tab/clipboard
+  changes and GTK split resizing have no matching Android runtime consumer.
+  The OSC 7 hostname change is in the desktop termio handler, while Android
+  receives the library's existing PWD callback. Desktop packaging, themes,
+  translations, benchmarks and CI changes do not add Android app behavior.
+
+Validation:
+
+- Gradle `prepareNativeSources`, `buildGhosttyAndroid`, `buildGhosttyTerminfo`,
+  `test`, `assembleDebug` and `lint` finished with `BUILD SUCCESSFUL` (217
+  tasks: 45 executed, 172 up to date on the final run). Native/JNI compilation
+  covered arm64-v8a, armeabi-v7a, x86 and x86_64. All 444 debug/release Java
+  test executions passed with zero skips, and all four modules reported
+  zero lint issues for both variants.
+- Patched upstream `zig build test-lib-vt -Demit-lib-vt=true
+  -Doptimize=debug -j1 --cache-dir /home/user/.cache/ghostty-sync-test
+  --summary all` passed all 57 build steps: 7,187 tests passed, 74 skipped
+  and zero failed. The glyph width regression passed. Forward/reverse patch
+  checks and `git diff --check` also passed.
+- JNI and renderer syntax checks passed for all four Android ABIs with
+  `-Wall -Wextra -Werror`. The host shared library's ABI manifest passed
+  upstream's JSON schema verifier with 220 types, including the glyph types.
+- A host fixture linked the patched library and extracted the Android
+  renderer's actual placement and pixel composition functions. It passed
+  fixed, virtual and relative placements, negative viewport clipping,
+  no-op/scroll generations, erased history, animation deadlines and pixels,
+  OSC 7501 malformed IDs and RIS, glyph contours/points and mixed ASCII/CJK
+  widths/reset, formatter unwrap/trim/selection, style flags/reset and search
+  next/previous checks. The generated placement, clipping and animation
+  images were inspected. They are host CPU output, not Android Vulkan captures.
+- Initial host debug runs hit a Zig 0.17 stack-unwinding overflow in
+  `std.debug.SelfInfo.Elf.DlIterContext.callback`: this orb's vDSO has high
+  segment virtual addresses that require wrapping relocation arithmetic.
+  A host-only `LD_PRELOAD` shim normalized the vDSO program headers before
+  rerunning the same binaries. No terminal code, test assertions, Zig sources
+  or Android binaries were changed for this environment workaround.
+- Zig's test temporary directory is `.zig-cache/tmp`, independently of
+  `--cache-dir`. An initial standalone run reproduced the previous sync's
+  temporary-file prefix failure because its outside path was still inside
+  the allowed `/tmp` root. Linking that directory to workspace build storage
+  made the unchanged failing case pass; the complete build-step test run
+  above also passed. Java tests initially failed during Robolectric setup
+  when the root disk filled. They passed after clearing disposable caches
+  and moving `java.io.tmpdir` to workspace build storage.
+- All four ABI APKs and the universal APK passed ZIP CRC, exact ABI/library
+  set, byte comparisons against all 11 generated shell/terminfo assets,
+  packaged native-library byte comparisons, ELF architecture and 16 KiB
+  LOAD alignment checks. Packaged JNI/glyph/formatter exports are present,
+  the old word-or-output JNI entry is absent, no Ghostty symbols remain
+  unresolved, and Ghostty/C++ are linked statically.
+  `zipalign -c -p 4` and `apksigner verify` passed for all five APKs with the
+  same debug certificate. The arm64 APK is 47,815,146 bytes; its SHA-256 is
+  `ddba73334beb3d90258bcbb0572e36e86536f2e64add37fa3276db72161eb3be`.
+- The build, test and APK results above precede removal of the unused
+  `zigIo()` accessor. The final patch passed forward/reverse application
+  checks and a source comparison confirming that only the unused function
+  was removed. No APK was rebuilt after that removal.
+- No Android device was connected. Actual Vulkan presentation and device
+  interaction remain unverified; the host fixture images cover CPU composition.
+
 ## 2026-10-27 sync
 
 The immutable pin moved from `22fa134a07f5749edd9e92c6bc17d8aaf61843be` to
